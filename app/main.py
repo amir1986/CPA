@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_error_handlers
-from app.api.routes import auth, health
+from app.api.routes import auth, clients, engagements, files, health, query, sources
 from app.config import get_settings
 
 
@@ -53,6 +53,11 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(clients.router)
+    app.include_router(engagements.router)
+    app.include_router(files.router)
+    app.include_router(query.router)
+    app.include_router(sources.router)
 
     return app
 

@@ -1,0 +1,106 @@
+# Standards sources for the RAG corpus.
+#
+# Each entry is auto-fetched only if it's public/licit. FASB ASC and IFRS full
+# text are paywalled; we only ingest exposure drafts, basis-for-conclusions,
+# topic pages, and government-published Hebrew standards.
+#
+# Fields:
+#   id            stable slug (used as point-id seed in Qdrant)
+#   name          human name
+#   url           landing/page URL
+#   corpus_type   accounting | auditing | tax
+#   jurisdiction  US | IFRS | IL
+#   language      en | he
+#   kind          html | pdf
+#   licence       short licence note
+
+sources:
+  - id: fasb_asc_public
+    name: "FASB ASC — public excerpts & exposure drafts"
+    url: https://www.fasb.org/page/PageContent?pageId=/standards.html
+    corpus_type: accounting
+    jurisdiction: US
+    language: en
+    kind: html
+    licence: "Public excerpts only. Full ASC text is paywalled by FASB; upload licensed copies via authenticated upload."
+
+  - id: ifrs_foundation_public
+    name: "IFRS Foundation — exposure drafts, basis for conclusions"
+    url: https://www.ifrs.org/projects/
+    corpus_type: accounting
+    jurisdiction: IFRS
+    language: en
+    kind: html
+    licence: "Public excerpts only. Full IFRS Standards text is paywalled by the IFRS Foundation."
+
+  - id: iasb_org_il_he
+    name: "ישראל - תקני חשבונאות (IASB.org.il)"
+    url: https://www.iasb.org.il/
+    corpus_type: accounting
+    jurisdiction: IL
+    language: he
+    kind: pdf
+    licence: "Government-published Hebrew standards."
+
+  - id: aicpa_au_c_public
+    name: "AICPA AU-C — public excerpts"
+    url: https://www.aicpa-cima.com/topic/audit-assurance
+    corpus_type: auditing
+    jurisdiction: US
+    language: en
+    kind: html
+    licence: "Public excerpts."
+
+  - id: pcaob_as
+    name: "PCAOB Auditing Standards"
+    url: https://pcaobus.org/oversight/standards/auditing-standards
+    corpus_type: auditing
+    jurisdiction: US
+    language: en
+    kind: html
+    licence: "Public domain (US government-equivalent)."
+
+  - id: iaasb_isa
+    name: "IAASB ISA — handbook excerpts and exposure drafts"
+    url: https://www.iaasb.org/publications
+    corpus_type: auditing
+    jurisdiction: IFRS
+    language: en
+    kind: html
+    licence: "Public excerpts."
+
+  - id: il_audit_standards
+    name: "Israeli auditing standards"
+    url: https://www.icpas.org.il/
+    corpus_type: auditing
+    jurisdiction: IL
+    language: he
+    kind: pdf
+    licence: "Professional body publications."
+
+  - id: il_tax_authority
+    name: "Israel Tax Authority — circulars & rulings"
+    url: https://www.gov.il/he/departments/israel_tax_authority
+    corpus_type: tax
+    jurisdiction: IL
+    language: he
+    kind: html
+    licence: "Government publications."
+
+  - id: us_irc_cornell
+    name: "US IRC — Cornell LII"
+    url: https://www.law.cornell.edu/uscode/text/26
+    corpus_type: tax
+    jurisdiction: US
+    language: en
+    kind: html
+    licence: "Public domain (US federal law)."
+
+  - id: irs_pubs
+    name: "IRS Publications"
+    url: https://www.irs.gov/forms-pubs
+    corpus_type: tax
+    jurisdiction: US
+    language: en
+    kind: html
+    licence: "Public domain (US federal agency)."
