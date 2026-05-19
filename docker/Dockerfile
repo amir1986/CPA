@@ -70,11 +70,14 @@ COPY --from=builder --chown=app:app /app/app /app/app
 COPY --from=builder --chown=app:app /app/alembic.ini /app/alembic.ini
 COPY --from=builder --chown=app:app /app/migrations /app/migrations
 COPY --from=builder --chown=app:app /app/config /app/config
+COPY --chown=app:app scripts /app/scripts
+COPY --chown=app:app docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 USER app
 EXPOSE 8000
 
-HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=20s \
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=30s \
     CMD curl -fsS http://127.0.0.1:8000/healthz || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/app/entrypoint.sh"]

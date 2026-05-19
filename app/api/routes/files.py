@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import logging
 import mimetypes
 import uuid
+from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, File as FileParam, Form, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +20,7 @@ from app.api.errors import ApiError
 from app.api.routes.engagements import ensure_in_firm
 from app.api.schemas.engagement import FileListOut, FileOut
 from app.db.models.files import File, FileKind, ParsedStatus
-from app.db.session import get_session
+from app.db.session import get_session, get_sessionmaker
 from app.storage.paths import raw_key, s3_uri
 from app.storage.s3 import get_object_store
 
@@ -126,6 +130,44 @@ async def get_file(
     if f is None or f.engagement_id != engagement_id:
         raise ApiError(status=404, code="not_found", detail="file not found")
     return _out(f)
+
+
+@router.get("/{file_id}/status/stream")
+async def file_status_stream(
+    engagement_id: uuid.UUID,
+    file_id: uuid.UUID,
+    principal: RequestPrincipal = Depends(current_principal),
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    """SSE: emits the file's parsed_status until it lands on done or failed."""
+    await ensure_in_firm(engagement_id, principal, session)
+    f = await session.get(File, file_id)
+    if f is None or f.engagement_id != engagement_id:
+        raise ApiError(status=404, code="not_found", detail="file not found")
+
+    async def gen() -> AsyncIterator[bytes]:
+        factory = get_sessionmaker()
+        last: str | None = None
+        for _ in range(120):  # ≤ 2 minutes, polling every 1s
+            async with factory() as s2:
+                row = await s2.get(File, file_id)
+                if row is None:
+                    yield f"event: error\ndata: {json.dumps({'detail': 'file vanished'})}\n\n".encode()
+                    return
+                cur = row.parsed_status.value
+            if cur != last:
+                yield f"event: status\ndata: {json.dumps({'status': cur})}\n\n".encode()
+                last = cur
+            if cur in {"done", "failed"}:
+                yield b"event: done\ndata: {}\n\n"
+                return
+            await asyncio.sleep(1)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
