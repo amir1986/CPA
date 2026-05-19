@@ -9,7 +9,8 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health
+from app.api.errors import register_error_handlers
+from app.api.routes import auth, health
 from app.config import get_settings
 
 
@@ -40,8 +41,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Local development convenience; the production Ingress puts web and api on
-    # the same origin so CORS is moot. We allow same-origin only here.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:8080", "http://localhost:3000"],
@@ -50,7 +49,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    register_error_handlers(app)
+
     app.include_router(health.router)
+    app.include_router(auth.router)
+
     return app
 
 
