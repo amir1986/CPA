@@ -11,15 +11,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_error_handlers
 from app.api.routes import (
+    admin,
+    agent_route,
     analyze,
     audit_routes,
     auth,
     clients,
+    coa,
     engagements,
     files,
+    gl,
     health,
     query,
     sources,
+    tweaks,
 )
 from app.config import get_settings
 
@@ -70,6 +75,11 @@ def create_app() -> FastAPI:
     app.include_router(sources.router)
     app.include_router(analyze.router)
     app.include_router(audit_routes.router)
+    app.include_router(coa.router)
+    app.include_router(gl.router)
+    app.include_router(tweaks.router)
+    app.include_router(admin.router)
+    app.include_router(agent_route.router)
 
     return app
 
