@@ -10,7 +10,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_error_handlers
-from app.api.routes import auth, clients, engagements, files, health, query, sources
+from app.api.routes import (
+    analyze,
+    audit_routes,
+    auth,
+    clients,
+    engagements,
+    files,
+    health,
+    query,
+    sources,
+)
 from app.config import get_settings
 
 
@@ -58,6 +68,8 @@ def create_app() -> FastAPI:
     app.include_router(files.router)
     app.include_router(query.router)
     app.include_router(sources.router)
+    app.include_router(analyze.router)
+    app.include_router(audit_routes.router)
 
     return app
 
