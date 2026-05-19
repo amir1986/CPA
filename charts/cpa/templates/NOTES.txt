@@ -1,0 +1,17 @@
+CPA AI Assistant v{{ .Chart.AppVersion }} installed.
+
+Web tier:  {{ include "cpa.web.name" . }} (Service :3000)
+API tier:  {{ include "cpa.api.name" . }} (Service :8000)
+
+{{- if .Values.ingress.enabled }}
+
+Ingress: {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}
+  /        → web
+  /api/*   → api
+{{- end }}
+
+Verify:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "cpa.api.name" . }} 8000:8000
+  curl -s http://localhost:8000/healthz

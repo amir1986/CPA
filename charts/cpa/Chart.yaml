@@ -1,0 +1,14 @@
+apiVersion: v2
+name: cpa
+description: CPA AI Assistant — Web + API + RAG + agent (single chart, two Deployments behind one Ingress).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - cpa
+  - audit
+  - rag
+  - llm
+home: https://example.com/cpa
+sources:
+  - https://github.com/amir1986/cpa

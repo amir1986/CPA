@@ -1,0 +1,101 @@
+## ───────────────── Ingress ─────────────────
+ingress:
+  enabled: true
+  className: nginx
+  host: cpa.local
+  tls:
+    enabled: false
+    secretName: cpa-tls
+  annotations: {}
+
+## ───────────────── api ─────────────────
+api:
+  image:
+    repository: ghcr.io/amir1986/cpa-api
+    tag: ""             # defaults to .Chart.AppVersion when empty
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2",    memory: "4Gi" }
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  env: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile: { type: RuntimeDefault }
+
+## ───────────────── web ─────────────────
+web:
+  image:
+    repository: ghcr.io/amir1986/cpa-web
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests: { cpu: "200m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi" }
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  env: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    seccompProfile: { type: RuntimeDefault }
+
+## ───────────────── Secrets (inline; ExternalSecret/Vault preferred in prod) ─────────────────
+secrets:
+  existingSecret: ""
+  ollamaApiKeys: ""        # newline-separated
+  jwtSecret: ""
+  adminApiKey: ""
+  authSecret: ""           # for the web tier
+  databaseUrl: ""          # optional override; otherwise built from in-chart postgres
+  s3:
+    accessKey: ""
+    secretKey: ""
+    endpoint: ""
+    bucket: cpa
+  smtp:
+    host: ""
+    port: 587
+    username: ""
+    password: ""
+    from: cpa@example.com
+
+## ───────────────── In-chart stateful deps (off in prod) ─────────────────
+postgres:
+  enabled: false
+  image: postgres:16-alpine
+  storage: 20Gi
+
+qdrant:
+  enabled: true
+  image: qdrant/qdrant:v1.11.3
+  storage: 50Gi
+
+minio:
+  enabled: false
+  image: minio/minio:latest
+  storage: 100Gi
+
+## ───────────────── Standards ingest ─────────────────
+ingest:
+  enabled: true
+  schedule: ""            # if empty → run as Job on install/upgrade; if set → CronJob
+  sources: []             # extra source IDs to enable
+
+## ───────────────── Observability ─────────────────
+serviceMonitor:
+  enabled: false
+  interval: 30s
+
+networkPolicy:
+  enabled: false

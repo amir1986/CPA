@@ -1,0 +1,47 @@
+@import "../styles/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    border-color: var(--c-border);
+  }
+
+  html {
+    color-scheme: light dark;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  html[dir="rtl"] body {
+    font-family: var(--font-heebo);
+  }
+
+  body {
+    background-color: var(--c-bg);
+    color: var(--c-fg);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    min-height: 100vh;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c-focus);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--c-brand) 30%, transparent);
+  }
+}
+
+@layer components {
+  .skip-to-content {
+    @apply absolute left-2 top-2 -translate-y-16 rounded-md bg-bg-elev px-3 py-2 text-sm font-medium shadow-e2 transition focus:translate-y-0;
+  }
+}
