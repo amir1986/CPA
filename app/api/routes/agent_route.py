@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.agent import run_agent
+from app.agent.llama_agent import run_agent
 from app.agent.tools import build_tools
 from app.api.auth import RequestPrincipal, current_principal
 from app.api.errors import ApiError
