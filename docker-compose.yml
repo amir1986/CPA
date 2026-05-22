@@ -36,6 +36,11 @@ services:
       SMTP_PORT: 1025
       SMTP_FROM: cpa@example.com
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CPA_LLM_BACKEND: ${CPA_LLM_BACKEND:-ollama}
+      CPA_VECTOR_BACKEND: ${CPA_VECTOR_BACKEND:-memory}
+      CPA_EMBED_BACKEND: ${CPA_EMBED_BACKEND:-hash}
+      CPA_EMAIL_SINK: ${CPA_EMAIL_SINK:-smtp}
+      CPA_AGENT_BACKEND: ${CPA_AGENT_BACKEND:-simple}
     depends_on:
       postgres:
         condition: service_healthy
