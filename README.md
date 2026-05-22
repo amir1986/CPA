@@ -160,7 +160,8 @@ See [`web/README.md`](web/README.md) and [`app/README.md`](app/README.md) for ti
 
 ## Deployment
 
-See [`deploy/README.md`](deploy/README.md) for kind smoke install and EKS/GKE/AKS notes. Production values live in `charts/cpa/values-prod.yaml`.
+- **Free, click-through deploy on Render** — see [`deploy/render.md`](deploy/render.md). Connect the repo, click "New Blueprint", paste your `OLLAMA_API_KEYS` + Qdrant Cloud credentials, get a public URL. No CLI required.
+- **Production K8s** — kind smoke install + EKS/GKE/AKS notes live in [`deploy/README.md`](deploy/README.md); values in `charts/cpa/values-prod.yaml`.
 
 ## Licensing & sources
 

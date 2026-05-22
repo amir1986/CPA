@@ -26,9 +26,7 @@ dependencies = [
     "tenacity>=9.0",
     "orjson>=3.10",
     "qdrant-client>=1.11",
-    "llama-index-core>=0.11",
-    "llama-index-embeddings-huggingface>=0.3",
-    "sentence-transformers>=3.0",
+    "llama-index-core>=0.12",
     "pdfplumber>=0.11",
     "openpyxl>=3.1",
     "pandas>=2.2",
@@ -45,11 +43,16 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
     "prometheus-client>=0.20",
-    "llama-index-core>=0.12",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
+# Heavy ML stack — only needed when CPA_EMBED_BACKEND=e5. Free-tier hosts
+# (Render 512 MB) should NOT install this; the HashEmbedder default fits.
+ml = [
+    "sentence-transformers>=3.0",
+    "llama-index-embeddings-huggingface>=0.3",
+]
 ocr = ["pytesseract>=0.3.13", "pdf2image>=1.17", "Pillow>=10.4"]
 pdf = ["weasyprint>=62.0"]
 

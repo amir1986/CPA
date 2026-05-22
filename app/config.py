@@ -78,6 +78,30 @@ class Settings(BaseSettings):
     def _normalize_log_level(cls, v: str) -> str:
         return v.upper()
 
+    @field_validator("database_url")
+    @classmethod
+    def _ensure_asyncpg_dsn(cls, v: str) -> str:
+        """Normalize DSNs from hosts like Render/Heroku/Neon:
+
+        - ``postgres://`` → ``postgresql://``
+        - ``postgresql://`` (no driver) → ``postgresql+asyncpg://``
+        - libpq-style ``?sslmode=require`` → asyncpg's ``?ssl=require``
+        - drop ``?sslmode=disable`` entirely (asyncpg default)
+        """
+        if v.startswith("postgres://"):
+            v = "postgresql://" + v[len("postgres://") :]
+        if v.startswith("postgresql://"):
+            v = "postgresql+asyncpg://" + v[len("postgresql://") :]
+        # asyncpg doesn't understand "sslmode" — translate.
+        v = v.replace("sslmode=disable", "")
+        v = v.replace("sslmode=require", "ssl=require")
+        v = v.replace("sslmode=prefer", "ssl=prefer")
+        v = v.replace("sslmode=verify-ca", "ssl=verify-ca")
+        v = v.replace("sslmode=verify-full", "ssl=verify-full")
+        # Clean up a dangling ? or & after removing sslmode=disable.
+        v = v.replace("?&", "?").rstrip("?&")
+        return v
+
     def resolved_api_keys(self) -> list[str]:
         """Return the list of Ollama API keys, dedup'd and in declared order.
 

@@ -1,0 +1,101 @@
+## Render.com Blueprint — push this repo, click "New Blueprint", done.
+##
+## What you get:
+##   • cpa-api    — FastAPI on free tier (sleeps after 15 min idle)
+##   • cpa-web    — Next.js on free tier
+##   • cpa-db     — managed Postgres 16 (free tier, 1 GB)
+##
+## What you bring (paste in the Render UI when prompted):
+##   • OLLAMA_API_KEYS  — newline- or comma-separated
+##   • QDRANT_URL       — from https://cloud.qdrant.io (free 1 GB cluster)
+##   • QDRANT_API_KEY   — from the same Qdrant Cloud cluster
+##   • AUTH_URL         — the URL Render assigns to cpa-web after first
+##                        deploy (e.g. https://cpa-web.onrender.com).
+##                        Set it AFTER the first deploy, then click "Deploy"
+##                        again on the cpa-web service.
+##
+## See deploy/render.md for the click-by-click guide.
+
+services:
+  # ──────────────── api ────────────────
+  - type: web
+    name: cpa-api
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: .
+    dockerfilePath: docker/Dockerfile.slim
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: cpa-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: OLLAMA_API_KEYS
+        sync: false                # paste your list in the Render UI
+      - key: OLLAMA_BASE_URL
+        value: https://ollama.com
+      - key: OLLAMA_MODEL
+        value: gpt-oss:120b
+      - key: QDRANT_URL
+        sync: false                # paste from Qdrant Cloud
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: CPA_VECTOR_BACKEND
+        value: qdrant
+      - key: CPA_EMBED_BACKEND
+        value: hash                # 256-dim hash embedder; no model download
+      - key: CPA_LLM_BACKEND
+        value: ollama
+      - key: CPA_AGENT_BACKEND
+        value: llamaindex
+      - key: CPA_S3_BACKEND
+        value: memory              # in-process; lost on restart (demo mode)
+      - key: CPA_EMAIL_SINK
+        value: memory              # don't send real verify/reset emails
+      - key: LOG_LEVEL
+        value: INFO
+      - key: CPA_LOG_FORMAT
+        value: json
+      - key: OTEL_TRACES_SAMPLER_ARG
+        value: "0.1"               # 10% sampling to keep free-tier metrics light
+      - key: PORT
+        value: "8000"
+
+  # ──────────────── web ────────────────
+  - type: web
+    name: cpa-web
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: web
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: AUTH_TRUST_HOST
+        value: "true"
+      - key: AUTH_URL
+        sync: false                # paste cpa-web's URL after first deploy
+      - key: INTERNAL_API_BASE
+        sync: false                # paste https://cpa-api-XXXX.onrender.com after first deploy
+      - key: NEXT_PUBLIC_API_BASE
+        value: /api
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+
+databases:
+  - name: cpa-db
+    plan: free
+    databaseName: cpa
+    user: cpa
+    postgresMajorVersion: "16"
