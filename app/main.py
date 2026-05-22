@@ -24,6 +24,7 @@ from app.api.routes import (
     files,
     gl,
     health,
+    knowledge,
     query,
     sources,
     tweaks,
@@ -76,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(tweaks.router)
     app.include_router(admin.router)
     app.include_router(agent_route.router)
+    app.include_router(knowledge.router)
 
     return app
 
