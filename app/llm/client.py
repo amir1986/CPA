@@ -27,6 +27,18 @@ from app.llm.ollama_rotator import AllKeysExhausted, KeyRotator
 logger = logging.getLogger(__name__)
 
 
+def _llm_metric(outcome: str, *, cooldown: bool = False) -> None:
+    """Increment Prometheus counters. Defensive — telemetry is optional in tests."""
+    try:
+        from app.telemetry import LLM_KEY_COOLDOWNS, LLM_REQUESTS
+
+        LLM_REQUESTS.labels(outcome=outcome).inc()
+        if cooldown:
+            LLM_KEY_COOLDOWNS.inc()
+    except Exception:
+        pass
+
+
 @dataclass
 class LLMResponse:
     text: str
@@ -110,21 +122,27 @@ class OllamaCloudLLM:
                 if resp.status_code == 429:
                     retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
                     self._rotator.report_rate_limited(state.key, retry_after_seconds=retry_after)
+                    _llm_metric("rate_limited", cooldown=True)
                     continue
                 if resp.status_code in (401, 403):
                     self._rotator.report_unauthorized(state.key, reason=f"http_{resp.status_code}")
+                    _llm_metric("unauthorized")
                     continue
                 if resp.status_code >= 500:
                     self._rotator.report_server_error(state.key, reason=f"http_{resp.status_code}")
+                    _llm_metric("server_error")
                     await asyncio.sleep(0.5 + random.random())
                     continue
                 resp.raise_for_status()
                 self._rotator.report_success(state.key)
+                _llm_metric("success")
                 return resp
             except httpx.RequestError as exc:
                 self._rotator.report_server_error(state.key, reason=type(exc).__name__)
+                _llm_metric("server_error")
                 await asyncio.sleep(0.5 + random.random())
                 continue
+        _llm_metric("exhausted")
         raise AllKeysExhausted(None)
 
     async def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:

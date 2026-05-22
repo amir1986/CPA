@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_error_handlers
+from app.logging_setup import configure_logging
+from app.telemetry import setup_telemetry
 from app.api.routes import (
     admin,
     agent_route,
@@ -29,17 +31,10 @@ from app.api.routes import (
 from app.config import get_settings
 
 
-def _configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
-    )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    _configure_logging(settings.log_level)
+    configure_logging(settings.log_level)
     logging.getLogger(__name__).info(
         "CPA api starting (model=%s, keys=%d)",
         settings.ollama_model,
@@ -65,6 +60,7 @@ def create_app() -> FastAPI:
     )
 
     register_error_handlers(app)
+    setup_telemetry(app)
 
     app.include_router(health.router)
     app.include_router(auth.router)
