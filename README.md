@@ -1,5 +1,7 @@
 # CPA AI Assistant
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/amir1986/CPA/tree/claude/cpa-gaap-ifrs-system-3Dphm)
+
 A green-field, comprehensive AI-powered CPA workbench — a full web product, not just a Q&A bot.
 
 It (1) knows the standards with strict citations (US GAAP, IFRS, Israeli GAAP, AICPA / PCAOB / IAASB / Israeli audit, IL tax, US tax), (2) does the daily bookkeeping job (ingests TBs, GLs, bank statements, invoices, financial statements — xlsx / csv / pdf, OCR-aware), (3) analyzes (ratios, trends, common-size, anomalies), (4) tests and audits (sampling, JE tests, three-way match, cutoff, analytical procedures), (5) produces work product (workpapers, memos, management letters), (6) is orchestrable (every capability is a deterministic REST endpoint, with a higher-level `/agent` endpoint that chains them via LlamaIndex tool calling), and (7) is usable by humans (a polished bilingual EN+HE RTL-aware web app).
