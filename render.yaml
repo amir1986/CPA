@@ -66,6 +66,12 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # Cap V8 heap below the 512 MB container limit so `next build`
+      # can't OOM during the production compile.
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=460"
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
       - key: AUTH_SECRET
         generateValue: true
       - key: AUTH_TRUST_HOST
