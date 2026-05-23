@@ -15,12 +15,19 @@ async function registerAction(formData: FormData) {
   const firm_name = String(formData.get("firm_name") ?? "");
   const name = String(formData.get("name") ?? "");
 
-  const res = await fetch(`${API_BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, firm_name, name: name || null }),
-    cache: "no-store",
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, firm_name, name: name || null }),
+      cache: "no-store",
+    });
+  } catch (err) {
+    const detail = `api_unreachable: ${(err as Error).message} (tried ${API_BASE})`;
+    redirect(`/register?error=${encodeURIComponent(detail)}`);
+  }
+
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { detail?: string; title?: string };
     const code = body.title ?? "register_failed";
@@ -28,7 +35,14 @@ async function registerAction(formData: FormData) {
   }
 
   // Auto sign-in: NextAuth will re-call the backend /auth/login.
-  await signIn("credentials", { email, password, redirectTo: "/engagements" });
+  // signIn throws NEXT_REDIRECT on success — rethrow so Next handles it.
+  try {
+    await signIn("credentials", { email, password, redirectTo: "/engagements" });
+  } catch (err) {
+    if ((err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT")) throw err;
+    const detail = `signin_failed: ${(err as Error).message ?? "unknown"}`;
+    redirect(`/register?error=${encodeURIComponent(detail)}`);
+  }
 }
 
 type Props = { searchParams: Promise<{ error?: string }> };
@@ -57,8 +71,8 @@ export default async function RegisterPage({ searchParams }: Props) {
           <Input id="password" name="password" type="password" required minLength={12} autoComplete="new-password" />
         </div>
         {sp.error && (
-          <p className="text-sm text-danger">
-            {sp.error === "email_taken" ? "That email is already registered." : "Could not create account."}
+          <p className="text-sm text-danger break-words">
+            {decodeURIComponent(sp.error)}
           </p>
         )}
         <Button type="submit" className="w-full">Create account</Button>

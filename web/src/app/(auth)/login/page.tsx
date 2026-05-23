@@ -17,7 +17,12 @@ async function loginAction(formData: FormData) {
     // NextAuth's redirect throws a NEXT_REDIRECT-shaped error on success;
     // re-throw so the redirect actually happens.
     if ((err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT")) throw err;
-    redirect(`/login?error=invalid_credentials`);
+    const msg = (err as Error).message ?? "unknown";
+    // Surface the real error in dev/diagnostic; "invalid_credentials" for the
+    // common 401 case. This includes the API URL on connection failures so
+    // we can spot a missing INTERNAL_API_BASE from the UI.
+    const code = /credentials/i.test(msg) ? "invalid_credentials" : msg;
+    redirect(`/login?error=${encodeURIComponent(code)}`);
   }
 }
 
@@ -48,7 +53,11 @@ export default async function LoginPage({ searchParams }: Props) {
           </div>
           <Input id="password" name="password" type="password" required autoComplete="current-password" />
         </div>
-        {error && <p className="text-sm text-danger">Incorrect email or password.</p>}
+        {error && (
+          <p className="text-sm text-danger break-words">
+            {error === "invalid_credentials" ? "Incorrect email or password." : decodeURIComponent(error)}
+          </p>
+        )}
         <Button type="submit" className="w-full">Sign in</Button>
       </form>
       <p className="mt-6 text-center text-sm text-fg-muted">
