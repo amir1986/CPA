@@ -6,6 +6,11 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { file = "LICENSE" }
 
+# Lean core — boots the app, serves /healthz /readyz /auth/* /engagements/*
+# /query (with refusal when corpus is empty), and SSE. Heavy / feature-
+# specific deps live in optional groups below and are pulled in only when
+# you need them. This keeps the free-tier Render install under ~150 MB
+# peak so the 512 MB build stays under the OOM threshold.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -17,7 +22,6 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.29",
     "alembic>=1.13",
-    "aioboto3>=13.0",
     "bcrypt>=4.2",
     "pyjwt>=2.9",
     "aiosmtplib>=3.0",
@@ -26,16 +30,7 @@ dependencies = [
     "tenacity>=9.0",
     "orjson>=3.10",
     "qdrant-client>=1.11",
-    "llama-index-core>=0.12",
-    "pdfplumber>=0.11",
-    "openpyxl>=3.1",
-    "pandas>=2.2",
     "python-multipart>=0.0.9",
-    "workalendar>=17.0",
-    "python-bidi>=0.6",
-    "trafilatura>=1.12",
-    "selectolax>=0.3",
-    "rapidfuzz>=3.10",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-instrumentation-fastapi>=0.48b0",
@@ -47,14 +42,46 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# LlamaIndex ReActAgent backend. Only needed when CPA_AGENT_BACKEND=llamaindex.
+# The simple JSON tool-call loop (default for free deploys) needs none of this.
+agent = ["llama-index-core>=0.12"]
+
+# Per-engagement document parsers + bank-recon fuzzy matcher.
+# Excel TB/GL ingest needs `openpyxl`; PDF text needs `pdfplumber`;
+# bank reconciliation needs `rapidfuzz`; Hebrew PDFs need `python-bidi`.
+parse = [
+    "openpyxl>=3.1",
+    "pdfplumber>=0.11",
+    "python-bidi>=0.6",
+    "rapidfuzz>=3.10",
+    "workalendar>=17.0",
+]
+
+# Standards-corpus HTTP crawl.
+crawl = [
+    "trafilatura>=1.12",
+    "selectolax>=0.3",
+]
+
+# Real S3/MinIO storage. With CPA_S3_BACKEND=memory (the free-deploy default)
+# uploads land in process memory and survive only until the next restart —
+# fine for a demo. Install [s3] when you wire Cloudflare R2 / AWS S3.
+s3 = ["aioboto3>=13.0"]
+
 # Heavy ML stack — only needed when CPA_EMBED_BACKEND=e5. Free-tier hosts
-# (Render 512 MB) should NOT install this; the HashEmbedder default fits.
+# should NOT install this; the HashEmbedder default fits.
 ml = [
     "sentence-transformers>=3.0",
     "llama-index-embeddings-huggingface>=0.3",
 ]
+
 ocr = ["pytesseract>=0.3.13", "pdf2image>=1.17", "Pillow>=10.4"]
 pdf = ["weasyprint>=62.0"]
+
+# Everything: pulls every feature group. Use locally / on Starter+ plans.
+all = [
+    "cpa[agent,parse,crawl,s3,ml,ocr,pdf]",
+]
 
 [dependency-groups]
 dev = [
