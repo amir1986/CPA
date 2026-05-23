@@ -1,30 +1,38 @@
-## Render.com Blueprint — push this repo, click "New Blueprint", done.
+## Render.com Blueprint — native runtimes (no Docker).
 ##
-## What you get:
-##   • cpa-api    — FastAPI on free tier (sleeps after 15 min idle)
-##   • cpa-web    — Next.js on free tier
-##   • cpa-db     — managed Postgres 16 (free tier, 1 GB)
+## Why native (not Docker) on free tier:
+##   • Build logs stream to the events panel even on failed deploys
+##     — Docker free-tier hides them after failure.
+##   • ~2× less memory during build, so we don't OOM.
+##   • Faster cold starts.
 ##
-## What you bring (paste in the Render UI when prompted):
+## You bring (paste in the Render UI when prompted):
 ##   • OLLAMA_API_KEYS  — newline- or comma-separated
-##   • QDRANT_URL       — from https://cloud.qdrant.io (free 1 GB cluster)
-##   • QDRANT_API_KEY   — from the same Qdrant Cloud cluster
-##   • AUTH_URL         — the URL Render assigns to cpa-web after first
-##                        deploy (e.g. https://cpa-web.onrender.com).
-##                        Set it AFTER the first deploy, then click "Deploy"
-##                        again on the cpa-web service.
+##   • QDRANT_URL       — from https://cloud.qdrant.io
+##   • QDRANT_API_KEY   — from the same cluster
+##   • AUTH_URL         — paste the cpa-web URL after first deploy
+##   • INTERNAL_API_BASE — paste the cpa-api URL after first deploy
 ##
 ## See deploy/render.md for the click-by-click guide.
 
 services:
-  # ──────────────── api ────────────────
+  # ──────────────── api (native Python) ────────────────
   - type: web
     name: cpa-api
-    runtime: docker
+    runtime: python
     plan: free
     region: oregon
+    pythonVersion: "3.12"
     rootDir: .
-    dockerfilePath: docker/Dockerfile.slim
+    buildCommand: pip install --upgrade pip && pip install .
+    startCommand: |
+      set -e
+      for i in 1 2 3 4 5; do
+        alembic upgrade head && break
+        echo "alembic retry $i — waiting before retry"
+        sleep $((i*3))
+      done
+      exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
@@ -32,66 +40,68 @@ services:
         fromDatabase:
           name: cpa-db
           property: connectionString
+      - key: PYTHON_VERSION
+        value: "3.12"
       - key: JWT_SECRET
         generateValue: true
       - key: ADMIN_API_KEY
         generateValue: true
       - key: OLLAMA_API_KEYS
-        sync: false                # paste your list in the Render UI
+        sync: false
       - key: OLLAMA_BASE_URL
         value: https://ollama.com
       - key: OLLAMA_MODEL
         value: gpt-oss:120b
       - key: QDRANT_URL
-        sync: false                # paste from Qdrant Cloud
+        sync: false
       - key: QDRANT_API_KEY
         sync: false
       - key: CPA_VECTOR_BACKEND
         value: qdrant
       - key: CPA_EMBED_BACKEND
-        value: hash                # 256-dim hash embedder; no model download
+        value: hash
       - key: CPA_LLM_BACKEND
         value: ollama
       - key: CPA_AGENT_BACKEND
         value: llamaindex
       - key: CPA_S3_BACKEND
-        value: memory              # in-process; lost on restart (demo mode)
+        value: memory
       - key: CPA_EMAIL_SINK
-        value: memory              # don't send real verify/reset emails
+        value: memory
       - key: LOG_LEVEL
         value: INFO
       - key: CPA_LOG_FORMAT
         value: json
       - key: OTEL_TRACES_SAMPLER_ARG
-        value: "0.1"               # 10% sampling to keep free-tier metrics light
-      - key: PORT
-        value: "8000"
+        value: "0.1"
 
-  # ──────────────── web ────────────────
+  # ──────────────── web (native Node) ────────────────
   - type: web
     name: cpa-web
-    runtime: docker
+    runtime: node
     plan: free
     region: oregon
+    nodeVersion: "22"
     rootDir: web
-    dockerfilePath: ./Dockerfile
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: AUTH_SECRET
         generateValue: true
       - key: AUTH_TRUST_HOST
         value: "true"
       - key: AUTH_URL
-        sync: false                # paste cpa-web's URL after first deploy
+        sync: false
       - key: INTERNAL_API_BASE
-        sync: false                # paste https://cpa-api-XXXX.onrender.com after first deploy
+        sync: false
       - key: NEXT_PUBLIC_API_BASE
         value: /api
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: "3000"
 
 databases:
   - name: cpa-db
