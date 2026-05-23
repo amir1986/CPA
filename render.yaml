@@ -26,10 +26,9 @@ services:
     rootDir: .
     buildCommand: pip install --upgrade pip && pip install .
     startCommand: |
-      set -e
       for i in 1 2 3 4 5; do
-        alembic upgrade head && break
-        echo "alembic retry $i — waiting before retry"
+        if alembic upgrade head; then break; fi
+        echo "[start] alembic retry $i — waiting before retry"
         sleep $((i*3))
       done
       exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}
@@ -63,7 +62,11 @@ services:
       - key: CPA_LLM_BACKEND
         value: ollama
       - key: CPA_AGENT_BACKEND
-        value: llamaindex
+        # Lean free-tier install drops llama-index-core (it's in the [agent]
+        # extra). The "simple" backend is the hand-rolled JSON tool-call
+        # loop — same trace format, no extra deps. Switch to "llamaindex"
+        # after `pip install .[agent]` if you want the LlamaIndex backend.
+        value: simple
       - key: CPA_S3_BACKEND
         value: memory
       - key: CPA_EMAIL_SINK
