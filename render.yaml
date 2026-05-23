@@ -60,16 +60,23 @@ services:
     env: node
     plan: free
     rootDir: web
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    # Install pnpm via npm (works on every Render Node image; corepack
+    # sometimes needs write perms it doesn't have). --no-frozen-lockfile
+    # so a lockfile-version mismatch can't fail the install.
+    buildCommand: |
+      npm install -g pnpm@10.33.0
+      pnpm install --no-frozen-lockfile
+      pnpm build
     startCommand: pnpm start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: "22"
-      # Cap V8 heap below the 512 MB container limit so `next build`
-      # can't OOM during the production compile.
+      # V8 heap capped well below the 512 MB cgroup limit so total
+      # process memory (heap + native + libuv) stays under the kill
+      # threshold during `next build`'s peak.
       - key: NODE_OPTIONS
-        value: "--max-old-space-size=460"
+        value: "--max-old-space-size=380 --max-semi-space-size=32"
       - key: NEXT_TELEMETRY_DISABLED
         value: "1"
       - key: AUTH_SECRET
