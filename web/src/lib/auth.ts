@@ -24,14 +24,16 @@ declare module "next-auth" {
   }
 }
 
-declare module "next-auth/jwt" {
-  interface JWT {
-    accessToken?: string;
-    refreshToken?: string;
-    backendUser?: User;
-    accessTokenExpiresAt?: number;
-  }
-}
+// Local shape for the encrypted JWT. We avoid the next-auth/jwt module
+// augmentation because v5's subpath-export module resolution makes the
+// `declare module` form fragile at build time.
+type AppJWT = {
+  accessToken?: string;
+  refreshToken?: string;
+  backendUser?: User;
+  accessTokenExpiresAt?: number;
+  [key: string]: unknown;
+};
 
 const API_BASE = process.env.INTERNAL_API_BASE ?? "http://localhost:8000";
 
@@ -46,7 +48,9 @@ async function backendLogin(email: string, password: string): Promise<LoginOut |
   return (await res.json()) as LoginOut;
 }
 
-async function backendRefresh(refreshToken: string): Promise<{ access_token: string; refresh_token: string } | null> {
+async function backendRefresh(
+  refreshToken: string,
+): Promise<{ access_token: string; refresh_token: string } | null> {
   const res = await fetch(`${API_BASE}/auth/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -60,7 +64,9 @@ async function backendRefresh(refreshToken: string): Promise<{ access_token: str
 function decodeExpiry(token: string): number | undefined {
   try {
     const [, payloadB64] = token.split(".");
-    const json = JSON.parse(Buffer.from(payloadB64, "base64").toString("utf-8")) as { exp?: number };
+    const json = JSON.parse(Buffer.from(payloadB64, "base64").toString("utf-8")) as {
+      exp?: number;
+    };
     return json.exp;
   } catch {
     return undefined;
@@ -99,6 +105,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
   callbacks: {
     async jwt({ token, user }) {
+      const t = token as AppJWT;
       // Initial sign-in: persist tokens and user info into the JWT.
       if (user) {
         const u = user as unknown as {
@@ -106,36 +113,37 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           backendRefresh?: string;
           backendUser?: User;
         };
-        token.accessToken = u.backendAccess;
-        token.refreshToken = u.backendRefresh;
-        token.backendUser = u.backendUser;
-        token.accessTokenExpiresAt = u.backendAccess ? decodeExpiry(u.backendAccess) : undefined;
-        return token;
+        t.accessToken = u.backendAccess;
+        t.refreshToken = u.backendRefresh;
+        t.backendUser = u.backendUser;
+        t.accessTokenExpiresAt = u.backendAccess ? decodeExpiry(u.backendAccess) : undefined;
+        return t;
       }
       // Refresh ~30s before expiry.
       const now = Math.floor(Date.now() / 1000);
-      if (token.accessToken && token.accessTokenExpiresAt && now > token.accessTokenExpiresAt - 30) {
-        if (!token.refreshToken) return token;
-        const refreshed = await backendRefresh(token.refreshToken);
+      if (t.accessToken && t.accessTokenExpiresAt && now > t.accessTokenExpiresAt - 30) {
+        if (!t.refreshToken) return t;
+        const refreshed = await backendRefresh(t.refreshToken);
         if (refreshed) {
-          token.accessToken = refreshed.access_token;
-          token.refreshToken = refreshed.refresh_token;
-          token.accessTokenExpiresAt = decodeExpiry(refreshed.access_token);
+          t.accessToken = refreshed.access_token;
+          t.refreshToken = refreshed.refresh_token;
+          t.accessTokenExpiresAt = decodeExpiry(refreshed.access_token);
         }
       }
-      return token;
+      return t;
     },
     async session({ session, token }) {
-      session.accessToken = token.accessToken;
-      if (token.backendUser) {
+      const t = token as AppJWT;
+      session.accessToken = t.accessToken;
+      if (t.backendUser) {
         session.user = {
           ...session.user,
-          id: token.backendUser.id,
-          email: token.backendUser.email,
-          name: token.backendUser.name ?? token.backendUser.email,
-          role: token.backendUser.role,
-          firmId: token.backendUser.firm_id,
-          locale: token.backendUser.locale,
+          id: t.backendUser.id,
+          email: t.backendUser.email,
+          name: t.backendUser.name ?? t.backendUser.email,
+          role: t.backendUser.role,
+          firmId: t.backendUser.firm_id,
+          locale: t.backendUser.locale,
         };
       }
       return session;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { Core, EventObject, Ext, LayoutOptions, NodeSingular, StylesheetJson } from "cytoscape";
 import { Loader2, Search } from "lucide-react";
 
 type Node = {
@@ -35,7 +36,7 @@ const CORPUS_TYPES = ["accounting", "auditing", "tax"] as const;
 
 export function KnowledgeGraph({ initial }: { initial: Graph }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const cyRef = useRef<unknown>(null);
+  const cyRef = useRef<Core | null>(null);
   const [graph, setGraph] = useState<Graph>(initial);
   const [jurisdictions, setJurisdictions] = useState<Set<string>>(new Set());
   const [corpusTypes, setCorpusTypes] = useState<Set<string>>(new Set());
@@ -43,7 +44,7 @@ export function KnowledgeGraph({ initial }: { initial: Graph }) {
   const [selected, setSelected] = useState<Selected>(null);
   const [search, setSearch] = useState("");
 
-  // Initialize Cytoscape only once.
+  // Initialize Cytoscape once.
   useEffect(() => {
     if (!containerRef.current) return;
     let cancelled = false;
@@ -51,55 +52,50 @@ export function KnowledgeGraph({ initial }: { initial: Graph }) {
       const cytoscape = (await import("cytoscape")).default;
       const fcose = (await import("cytoscape-fcose")).default;
       if (cancelled) return;
-      cytoscape.use(fcose as unknown as cytoscape.Ext);
+      cytoscape.use(fcose as unknown as Ext);
 
-      const cy = cytoscape({
+      const cy: Core = cytoscape({
         container: containerRef.current,
         elements: toElements(graph),
-        style: GRAPH_STYLE,
-        layout: { name: "fcose", animate: false, randomize: false } as never,
+        style: GRAPH_STYLE as unknown as StylesheetJson,
+        layout: { name: "fcose", animate: false, randomize: false } as LayoutOptions,
         wheelSensitivity: 0.4,
       });
-      cy.on("tap", "node", (e) => {
-        setSelected(e.target.data() as unknown as Node);
+      cy.on("tap", "node", (e: EventObject) => {
+        setSelected(e.target.data() as Node);
       });
-      cy.on("tap", (e) => {
+      cy.on("tap", (e: EventObject) => {
         if (e.target === cy) setSelected(null);
       });
       cyRef.current = cy;
     })();
     return () => {
       cancelled = true;
-      (cyRef.current as { destroy?: () => void } | null)?.destroy?.();
+      cyRef.current?.destroy?.();
       cyRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-render when the graph data changes.
+  // Re-render when graph data changes.
   useEffect(() => {
-    const cy = cyRef.current as
-      | (typeof import("cytoscape"))["default"]["prototype"]
-      | null;
+    const cy = cyRef.current;
     if (!cy) return;
     cy.elements().remove();
     cy.add(toElements(graph));
-    cy.layout({ name: "fcose", animate: false, randomize: false } as never).run();
+    cy.layout({ name: "fcose", animate: false, randomize: false } as LayoutOptions).run();
   }, [graph]);
 
   // Focus / fade on search.
   useEffect(() => {
-    const cy = cyRef.current as
-      | (typeof import("cytoscape"))["default"]["prototype"]
-      | null;
+    const cy = cyRef.current;
     if (!cy) return;
     const q = search.trim().toLowerCase();
-    cy.nodes().forEach((n: unknown) => {
-      const data = (n as { data: () => Node }).data();
-      const node = n as { addClass: (c: string) => void; removeClass: (c: string) => void };
+    cy.nodes().forEach((n: NodeSingular) => {
+      const data = n.data() as Node;
       const hit = !q || data.label.toLowerCase().includes(q);
-      node.removeClass("dim");
-      if (q && !hit) node.addClass("dim");
+      n.removeClass("dim");
+      if (q && !hit) n.addClass("dim");
     });
   }, [search]);
 
@@ -147,7 +143,10 @@ export function KnowledgeGraph({ initial }: { initial: Graph }) {
           <Legend color="var(--c-brand)" label="concept" />
           <Legend color="var(--c-info)" label="standard" />
           <Legend color="var(--c-fg-muted)" label="paragraph" />
-          <span className="ms-auto">{graph.nodes.length} nodes / {graph.edges.length} edges {graph.truncated ? "(truncated)" : ""}</span>
+          <span className="ms-auto">
+            {graph.nodes.length} nodes / {graph.edges.length} edges{" "}
+            {graph.truncated ? "(truncated)" : ""}
+          </span>
         </div>
       </div>
       <aside className="space-y-4">
@@ -241,7 +240,9 @@ function NodeCard({ node }: { node: Node }) {
       <div className="mb-2 flex items-center gap-2">
         <span className="rounded-pill bg-bg-elev px-2 py-0.5 text-xs uppercase">{node.type}</span>
         {node.jurisdiction && (
-          <span className="rounded-pill bg-bg-elev px-2 py-0.5 text-xs font-mono">{node.jurisdiction}</span>
+          <span className="rounded-pill bg-bg-elev px-2 py-0.5 text-xs font-mono">
+            {node.jurisdiction}
+          </span>
         )}
       </div>
       <div className="text-base font-semibold">{node.label}</div>

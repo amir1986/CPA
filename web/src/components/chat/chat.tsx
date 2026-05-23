@@ -100,7 +100,7 @@ export function Chat() {
           );
         }
       }
-    } catch (e) {
+    } catch {
       setMessages((ms) =>
         ms.map((m) =>
           m.id === assistantMsg.id ? { ...m, text: "[error contacting backend]", refused: true } : m,
