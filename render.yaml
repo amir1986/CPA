@@ -1,39 +1,24 @@
-## Render.com Blueprint — native runtimes (no Docker).
+## Render.com Blueprint — minimal, defensive form.
 ##
-## Why native (not Docker) on free tier:
-##   • Build logs stream to the events panel even on failed deploys
-##     — Docker free-tier hides them after failure.
-##   • ~2× less memory during build, so we don't OOM.
-##   • Faster cold starts.
+## Native Python + Node runtimes (no Docker) so build logs stream
+## to the events panel even on failed deploys, and so the install
+## fits 512 MB free-tier memory.
 ##
 ## You bring (paste in the Render UI when prompted):
-##   • OLLAMA_API_KEYS  — newline- or comma-separated
-##   • QDRANT_URL       — from https://cloud.qdrant.io
-##   • QDRANT_API_KEY   — from the same cluster
-##   • AUTH_URL         — paste the cpa-web URL after first deploy
-##   • INTERNAL_API_BASE — paste the cpa-api URL after first deploy
-##
-## See deploy/render.md for the click-by-click guide.
+##   • OLLAMA_API_KEYS    newline- or comma-separated
+##   • QDRANT_URL         from https://cloud.qdrant.io
+##   • QDRANT_API_KEY     from the same cluster
+##   • AUTH_URL           paste the cpa-web URL after first deploy
+##   • INTERNAL_API_BASE  paste the cpa-api URL after first deploy
 
 services:
-  # ──────────────── api (native Python) ────────────────
   - type: web
     name: cpa-api
-    runtime: python
+    env: python
     plan: free
-    region: oregon
-    pythonVersion: "3.12"
-    rootDir: .
     buildCommand: pip install --upgrade pip && pip install .
-    startCommand: |
-      for i in 1 2 3 4 5; do
-        if alembic upgrade head; then break; fi
-        echo "[start] alembic retry $i — waiting before retry"
-        sleep $((i*3))
-      done
-      exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}
+    startCommand: bash -c "alembic upgrade head; exec uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /healthz
-    autoDeploy: true
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -62,10 +47,6 @@ services:
       - key: CPA_LLM_BACKEND
         value: ollama
       - key: CPA_AGENT_BACKEND
-        # Lean free-tier install drops llama-index-core (it's in the [agent]
-        # extra). The "simple" backend is the hand-rolled JSON tool-call
-        # loop — same trace format, no extra deps. Switch to "llamaindex"
-        # after `pip install .[agent]` if you want the LlamaIndex backend.
         value: simple
       - key: CPA_S3_BACKEND
         value: memory
@@ -73,23 +54,15 @@ services:
         value: memory
       - key: LOG_LEVEL
         value: INFO
-      - key: CPA_LOG_FORMAT
-        value: json
-      - key: OTEL_TRACES_SAMPLER_ARG
-        value: "0.1"
 
-  # ──────────────── web (native Node) ────────────────
   - type: web
     name: cpa-web
-    runtime: node
+    env: node
     plan: free
-    region: oregon
-    nodeVersion: "22"
     rootDir: web
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
     startCommand: pnpm start
     healthCheckPath: /api/health
-    autoDeploy: true
     envVars:
       - key: NODE_VERSION
         value: "22"
@@ -111,4 +84,3 @@ databases:
     plan: free
     databaseName: cpa
     user: cpa
-    postgresMajorVersion: "16"
