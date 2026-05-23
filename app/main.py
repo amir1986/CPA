@@ -52,9 +52,22 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    settings = get_settings()
+
+    # CORS — local dev hosts + any explicit `CPA_CORS_ORIGINS` (comma-separated)
+    # + every *.vercel.app subdomain (the typical web host) via regex. The web
+    # tier proxies all API calls server-side so the browser rarely hits the
+    # api directly, but we keep CORS permissive to support direct curl and
+    # other clients during diagnostics.
+    import os
+
+    cors_origins: list[str] = ["http://localhost:8080", "http://localhost:3000"]
+    if extra := os.environ.get("CPA_CORS_ORIGINS"):
+        cors_origins.extend(o.strip() for o in extra.split(",") if o.strip())
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:8080", "http://localhost:3000"],
+        allow_origins=cors_origins,
+        allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
