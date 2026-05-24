@@ -9,12 +9,14 @@
  */
 
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
 
 import { registerFreshUser, signIn } from "./helpers";
 
-const FIXTURES = path.resolve(__dirname, "..", "fixtures", "comparison");
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURES = path.resolve(HERE, "..", "fixtures", "comparison");
 
 test.describe("USGAAP <> IFRS", () => {
   test("sidebar entry visible and routes to the landing page", async ({ page }) => {
@@ -112,7 +114,7 @@ test.describe("USGAAP <> IFRS", () => {
     const pageB = await ctxB.newPage();
     await registerFreshUser(pageB);
     const status = await pageB.evaluate(async (rid) => {
-      const r = await fetch(`/api/cpa/comparison/runs/${rid}`);
+      const r = await fetch(`/api/comparison/runs/${rid}`);
       return r.status;
     }, userARunId);
     expect(status).toBe(404);
@@ -133,7 +135,7 @@ test.describe("USGAAP <> IFRS — back-end smoke (no upload)", () => {
       await registerFreshUser(page);
     });
     const json = await page.evaluate(async () => {
-      const r = await fetch("/api/cpa/comparison/runs");
+      const r = await fetch("/api/comparison/runs");
       if (!r.ok) return { status: r.status, body: null };
       return { status: r.status, body: await r.json() };
     });

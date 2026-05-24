@@ -31,7 +31,7 @@ export function RunStatusPill({ runId, initial }: { runId: string; initial: stri
     const controller = new AbortController();
     (async () => {
       try {
-        const res = await fetch(`/api/cpa/comparison/runs/${runId}/stream`, {
+        const res = await fetch(`/api/comparison/runs/${runId}/stream`, {
           signal: controller.signal,
           headers: { Accept: "text/event-stream" },
         });

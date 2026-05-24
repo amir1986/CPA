@@ -25,7 +25,7 @@ export function UploadDropzone() {
     setError(null);
     const form = new FormData();
     Array.from(files).forEach((f) => form.append("files", f, f.name));
-    const res = await fetch(`/api/cpa/comparison/runs`, {
+    const res = await fetch(`/api/comparison/runs`, {
       method: "POST",
       body: form,
     });

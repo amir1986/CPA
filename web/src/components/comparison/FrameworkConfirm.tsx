@@ -23,7 +23,7 @@ export function FrameworkConfirm({ runId, detected, current, confidence, rationa
   function save() {
     setError(null);
     startTransition(async () => {
-      const res = await fetch(`/api/cpa/comparison/runs/${runId}/framework`, {
+      const res = await fetch(`/api/comparison/runs/${runId}/framework`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ framework: pick }),

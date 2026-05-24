@@ -12,7 +12,7 @@ export function ExportMemoButton({ runId }: { runId: string }) {
   async function download(format: "md" | "pdf") {
     setBusy(true);
     setError(null);
-    const res = await fetch(`/api/cpa/comparison/runs/${runId}/export`, {
+    const res = await fetch(`/api/comparison/runs/${runId}/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ format }),
