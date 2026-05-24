@@ -45,15 +45,89 @@ def render_template(
 
 
 def render_pdf_bytes(body_md: str) -> bytes:
-    """Render PDF from markdown via WeasyPrint when available, else raise."""
+    """Render a memo PDF from markdown.
+
+    Tries WeasyPrint first (best HTML/CSS output, supports CSS @page).
+    Falls back to fpdf2 (pure-Python, ~500 KB install, no system libs) so
+    the export works on every deploy regardless of whether WeasyPrint
+    could be built. fpdf2 uses a system Unicode TTF when one is found so
+    Hebrew (and any other non-Latin script in the memo) renders correctly.
+    """
+    # Path 1 — WeasyPrint (preferred when available).
     try:
         from weasyprint import HTML  # type: ignore[import-untyped]
+
+        html = (
+            "<html><body><pre style='font-family: sans-serif; white-space: pre-wrap;'>"
+            + _escape(body_md)
+            + "</pre></body></html>"
+        )
+        return HTML(string=html).write_pdf()
+    except ImportError:
+        pass
+
+    # Path 2 — fpdf2 fallback. Always available in core deps now.
+    try:
+        from fpdf import FPDF  # type: ignore[import-untyped]
     except ImportError as exc:
-        raise RuntimeError("WeasyPrint not installed") from exc
-    # Trivial markdown → HTML; nothing fancy. The plan defers a real
-    # markdown renderer to Phase 8.
-    html = "<html><body><pre style='font-family: sans-serif;'>" + _escape(body_md) + "</pre></body></html>"
-    return HTML(string=html).write_pdf()
+        raise RuntimeError(
+            "No PDF backend installed (need fpdf2 or weasyprint)"
+        ) from exc
+
+    return _fpdf_render(body_md, FPDF)
+
+
+def _fpdf_render(body_md: str, FPDF: type) -> bytes:
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # Prefer a Unicode-capable TTF so Hebrew + accented chars render. Falls
+    # back to fpdf2's built-in Helvetica (Latin-only) when none is found.
+    font_name = "Helvetica"
+    font_path = _find_unicode_font()
+    if font_path is not None:
+        try:
+            pdf.add_font("uni", "", str(font_path), uni=True)
+            font_name = "uni"
+        except Exception:
+            pass
+
+    pdf.set_font(font_name, size=10)
+    # Render line-by-line. multi_cell handles wrapping at the right margin.
+    for raw_line in body_md.split("\n"):
+        line = raw_line.rstrip()
+        if not line:
+            pdf.ln(4)
+            continue
+        try:
+            pdf.multi_cell(0, 5, line)
+        except Exception:
+            # Drop any character the font can't represent rather than crash
+            # the whole export. Rare with DejaVu but defensive.
+            pdf.multi_cell(0, 5, line.encode("latin-1", "ignore").decode("latin-1"))
+    out = pdf.output()
+    return bytes(out) if not isinstance(out, (bytes, bytearray)) else bytes(out)
+
+
+def _find_unicode_font() -> Path | None:
+    """Search common system paths for a Unicode-capable TrueType font."""
+    candidates = (
+        # Debian / Ubuntu (Render's base image).
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        # Other Linux distros.
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        # macOS dev.
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+    )
+    for path in candidates:
+        p = Path(path)
+        if p.exists():
+            return p
+    return None
 
 
 def _escape(s: str) -> str:
