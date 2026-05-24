@@ -213,7 +213,7 @@ test.describe("USGAAP <> IFRS — comprehensive live", () => {
   });
 
   test("07 stream endpoint emits SSE frames", async ({ page }) => {
-    test.setTimeout(180_000);
+    test.setTimeout(120_000);
     await skipLogin(page);
     // Re-use the most recent run (or create one).
     await page.goto("/usgaap-ifrs");
@@ -221,7 +221,9 @@ test.describe("USGAAP <> IFRS — comprehensive live", () => {
     await page.waitForURL(/\/usgaap-ifrs\/[0-9a-f-]{36}$/, { timeout: 60_000 });
     const runId = page.url().split("/").pop()!;
 
-    // Read the first ~3 SSE events directly.
+    // Read SSE events with a hard per-chunk deadline. The previous version
+    // blocked on reader.read() when the stream stayed open between events;
+    // race the read against a timer so the loop always makes progress.
     const events = await page.evaluate(async (rid) => {
       const r = await fetch(`/api/comparison/runs/${rid}/stream`, {
         headers: { Accept: "text/event-stream" },
@@ -231,11 +233,22 @@ test.describe("USGAAP <> IFRS — comprehensive live", () => {
       const dec = new TextDecoder();
       let buf = "";
       const out: { event: string; data: string }[] = [];
-      const deadline = Date.now() + 30_000;
-      while (Date.now() < deadline && out.length < 3) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
+      const overallDeadline = Date.now() + 30_000;
+
+      const readWithTimeout = (ms: number) =>
+        Promise.race<{ done: boolean; value?: Uint8Array; timedOut?: boolean }>([
+          reader.read().then((v) => ({ ...v })),
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ done: false, timedOut: true }), ms),
+          ),
+        ]);
+
+      while (Date.now() < overallDeadline && out.length < 3) {
+        const remaining = overallDeadline - Date.now();
+        const r2 = await readWithTimeout(Math.min(remaining, 6_000));
+        if (r2.timedOut) continue;
+        if (r2.done) break;
+        buf += dec.decode(r2.value!, { stream: true });
         let idx: number;
         while ((idx = buf.indexOf("\n\n")) >= 0) {
           const block = buf.slice(0, idx);
@@ -255,7 +268,6 @@ test.describe("USGAAP <> IFRS — comprehensive live", () => {
     }, runId);
 
     expect(events.length).toBeGreaterThan(0);
-    // At least one status event with a known status value.
     const statusEvts = events.filter((e) => e.event === "status");
     expect(statusEvts.length).toBeGreaterThan(0);
     const first = JSON.parse(statusEvts[0].data) as { status?: string };
