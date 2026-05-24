@@ -27,6 +27,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from app.agent.agent import run_agent
+from app.agent.tools import Tool
 from app.db.models.comparison_models import (
     ComparisonIssue,
     ComparisonRun,
@@ -35,13 +37,14 @@ from app.db.models.comparison_models import (
 )
 from app.db.models.files import File
 from app.db.session import get_sessionmaker
+from app.domain.models import Citation
 from app.ingest_docs.extractors.pdf_text import (
     ExtractedSpan,
     extract_pdf_text,
     is_likely_scanned,
 )
 from app.llm.client import LLMClient, get_llm
-from app.rag.query_engine import answer_question
+from app.rag.query_engine import QueryAnswer, answer_question
 from app.storage.s3 import get_object_store
 
 logger = logging.getLogger(__name__)
@@ -98,15 +101,52 @@ async def _extract_one(f: File) -> _ExtractResult:
     raise ValueError(f"unsupported file kind: {f.original_name} (mime={f.mime})")
 
 
+# Ollama Cloud free-tier rejects single prompts above roughly 32K tokens
+# with a 400 — large XLSX financial statements (hundreds of flattened
+# rows) blow past that easily. Cap each span and the total corpus so the
+# detect-and-identify prompt always fits the context window.
+_MAX_SPAN_CHARS = 800
+_MAX_CORPUS_CHARS = 24_000
+
+
 def _build_corpus(spans: list[tuple[str, ExtractedSpan]]) -> str:
     """Join all spans into a single chunked text blob the LLM can see, each
-    span prefixed with its anchor so it can reference them by ID."""
-    pieces: list[str] = []
-    for ref, sp in spans:
-        if not sp.text.strip():
-            continue
-        pieces.append(f"<chunk id=\"{ref}\">\n{sp.text}\n</chunk>")
-    return "\n\n".join(pieces)
+    span prefixed with its anchor so it can reference them by ID.
+
+    Truncates per-span and globally to keep the prompt under the model's
+    context budget. When the global cap kicks in, picks an evenly-spaced
+    sample of the spans instead of dropping the tail — for a long FS the
+    tail rows are often the most informative (totals, notes).
+    """
+    non_empty = [(ref, sp) for ref, sp in spans if sp.text.strip()]
+    if not non_empty:
+        return ""
+
+    # Per-span cap so one mega-row can't eat the entire budget.
+    capped = [
+        (ref, sp.text[:_MAX_SPAN_CHARS] + ("…[truncated]" if len(sp.text) > _MAX_SPAN_CHARS else ""))
+        for ref, sp in non_empty
+    ]
+
+    # Estimate the full corpus; if it fits, return it directly.
+    full = "\n\n".join(f"<chunk id=\"{ref}\">\n{text}\n</chunk>" for ref, text in capped)
+    if len(full) <= _MAX_CORPUS_CHARS:
+        return full
+
+    # Otherwise, evenly-space-sample spans down to the budget.
+    n = len(capped)
+    # Roughly how many spans the budget can hold. Each chunk wrapper adds
+    # ~25 chars of overhead.
+    avg = max(1, sum(len(t) + 25 for _, t in capped) // n)
+    target_count = max(1, _MAX_CORPUS_CHARS // avg)
+    if target_count >= n:
+        return full[:_MAX_CORPUS_CHARS] + "\n\n[corpus truncated — original document is larger]"
+    step = n / target_count
+    sampled_idxs = sorted({int(i * step) for i in range(target_count)} | {0, n - 1})
+    sampled = [capped[i] for i in sampled_idxs if i < n]
+    out = "\n\n".join(f"<chunk id=\"{ref}\">\n{text}\n</chunk>" for ref, text in sampled)
+    out += f"\n\n[corpus sampled — {len(sampled)} of {n} chunks shown]"
+    return out
 
 
 _DETECT_PROMPT = """You are a CPA assistant analyzing a client's uploaded accounting documents to translate them between US GAAP and IFRS.
@@ -202,20 +242,100 @@ def _citation_dicts(citations: list) -> list[dict]:
 # Per-issue retrieval also gets a guard against runaway LLM calls. Both
 # fan-outs share this budget; on timeout we return None/None and the
 # orchestrator persists the issue with empty standards-side summaries.
-_COMPARE_TIMEOUT_S = 120.0
+_COMPARE_TIMEOUT_S = 180.0
+_AGENT_MAX_STEPS = 4
 
 
-async def _compare_one(topic: str, current_summary: str) -> tuple[Any, Any]:
-    """Fan out both jurisdictions in parallel using the existing RAG engine."""
-    question = (
-        f"Summarize the treatment of {topic}. "
-        f"The taxpayer's current policy states: {current_summary[:600]}. "
-        f"Quote the controlling standard and identify the recognition / measurement rules."
+def _kb_search_tool(jurisdiction: str) -> Tool:
+    """A jurisdiction-scoped wrapper around ``answer_question`` so the agent
+    loop can call it like any other tool. The agent is free to refine its
+    query (e.g. follow up with a narrower question) which is the whole point
+    of routing per-issue retrieval through the agent rather than a single
+    one-shot RAG call.
+    """
+
+    async def fn(args: dict[str, Any]) -> dict[str, Any]:
+        result = await answer_question(
+            str(args.get("question", "")),
+            jurisdictions=[jurisdiction],
+            corpus_types=["accounting"],
+        )
+        return {
+            "refused": result.refused,
+            "answer": result.answer,
+            "citations": _citation_dicts(result.citations),
+        }
+
+    return Tool(
+        name="kb_search",
+        description=(
+            f"Search the {jurisdiction} accounting standards corpus and "
+            "return a cited summary. Use this to look up the controlling "
+            "standard for the topic. You may call it multiple times with "
+            "refined questions."
+        ),
+        parameters={"question": "string"},
+        fn=fn,
     )
+
+
+def _hydrate_query_answer(
+    agent_result: Any,
+) -> QueryAnswer:
+    """Map the agent's final answer + citations back into the QueryAnswer
+    shape the orchestrator's downstream code already understands."""
+    cites: list[Citation] = []
+    for c in agent_result.citations or []:
+        if not isinstance(c, dict):
+            continue
+        cites.append(
+            Citation(
+                standard=c.get("standard"),
+                paragraph=c.get("paragraph"),
+                url=c.get("url", ""),
+                quote=c.get("quote", ""),
+            )
+        )
+    refused = not (agent_result.final_answer and cites)
+    return QueryAnswer(
+        answer=agent_result.final_answer or "",
+        citations=cites,
+        refused=refused,
+        language="en",
+        retrieved=[],
+    )
+
+
+async def _run_one_agent(topic: str, current_summary: str, jurisdiction: str) -> QueryAnswer:
+    """One side of the comparison, driven by the agent loop."""
+    question = (
+        f"Summarize the {jurisdiction} accounting treatment of: {topic}. "
+        f"The taxpayer's current policy states: {current_summary[:600]} "
+        f"Quote the controlling standard and identify the recognition / "
+        "measurement rules. Use kb_search to look up the relevant standards. "
+        "Return your final answer with at least one citation."
+    )
+    result = await run_agent(
+        question,
+        tools=[_kb_search_tool(jurisdiction)],
+        llm=get_llm(),
+        max_steps=_AGENT_MAX_STEPS,
+    )
+    return _hydrate_query_answer(result)
+
+
+async def _compare_one(topic: str, current_summary: str) -> tuple[QueryAnswer, QueryAnswer]:
+    """Drive both jurisdictions in parallel via the agent loop.
+
+    Each side runs the same tool-calling agent with a single tool
+    (``kb_search``) scoped to its framework. The agent picks how many
+    queries to issue (capped at ``_AGENT_MAX_STEPS``) and returns a final
+    cited summary.
+    """
     return await asyncio.wait_for(
         asyncio.gather(
-            answer_question(question, jurisdictions=["US"], corpus_types=["accounting"]),
-            answer_question(question, jurisdictions=["IFRS"], corpus_types=["accounting"]),
+            _run_one_agent(topic, current_summary, "US"),
+            _run_one_agent(topic, current_summary, "IFRS"),
         ),
         timeout=_COMPARE_TIMEOUT_S,
     )
