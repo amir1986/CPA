@@ -17,10 +17,23 @@ services:
     env: python
     plan: free
     buildCommand: pip install --upgrade pip && pip install .
-    # `&&` instead of `;` — if alembic fails, the deploy fails LOUDLY
-    # instead of starting uvicorn against an empty schema. set -e is
-    # belt-and-suspenders inside bash -c.
-    startCommand: bash -c "set -e && alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    # `python -m alembic` / `python -m uvicorn` avoid depending on
+    # Render putting the venv's bin/ on PATH (which silently failed —
+    # `alembic upgrade head` was returning 127 with no stderr).
+    # `&&` so alembic failure crashes the deploy loudly instead of
+    # starting uvicorn against an empty schema. Diagnostic echoes
+    # tell us which step we're at when the next deploy log is read.
+    startCommand: |
+      bash -c '
+        set -e
+        echo "[start] pwd=$(pwd)"
+        echo "[start] python=$(command -v python || echo MISSING)"
+        echo "[start] alembic.ini exists? $(test -f alembic.ini && echo yes || echo NO)"
+        echo "[start] running migrations..."
+        python -m alembic upgrade head
+        echo "[start] migrations done; starting uvicorn on :${PORT:-10000}"
+        exec python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}
+      '
     healthCheckPath: /healthz
     envVars:
       - key: DATABASE_URL
