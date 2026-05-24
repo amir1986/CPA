@@ -6,9 +6,8 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

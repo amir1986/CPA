@@ -6,6 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+const API_BASE = process.env.INTERNAL_API_BASE ?? "http://localhost:8000";
+
+// Hard-coded "guest" credentials used by the Skip button. The first
+// click registers this user (auto-creating a Demo Firm) if it doesn't
+// exist yet; subsequent clicks just sign in. To disable the skip path
+// in prod, unset CPA_ALLOW_SKIP=true (or always remove the button).
+const SKIP_EMAIL = "demo@cpa.example";
+const SKIP_PASSWORD = "demo-skip-pass-1234";
+const SKIP_FIRM = "Demo Firm";
+
 async function loginAction(formData: FormData) {
   "use server";
   const email = String(formData.get("email") ?? "");
@@ -14,15 +24,44 @@ async function loginAction(formData: FormData) {
   try {
     await signIn("credentials", { email, password, redirectTo: from || "/" });
   } catch (err) {
-    // NextAuth's redirect throws a NEXT_REDIRECT-shaped error on success;
-    // re-throw so the redirect actually happens.
     if ((err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT")) throw err;
     const msg = (err as Error).message ?? "unknown";
-    // Surface the real error in dev/diagnostic; "invalid_credentials" for the
-    // common 401 case. This includes the API URL on connection failures so
-    // we can spot a missing INTERNAL_API_BASE from the UI.
     const code = /credentials/i.test(msg) ? "invalid_credentials" : msg;
     redirect(`/login?error=${encodeURIComponent(code)}`);
+  }
+}
+
+async function skipAction() {
+  "use server";
+  // Idempotent register: 409 (email_taken) is the expected steady-state response.
+  try {
+    await fetch(`${API_BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: SKIP_EMAIL,
+        password: SKIP_PASSWORD,
+        name: "Demo User",
+        firm_name: SKIP_FIRM,
+      }),
+      cache: "no-store",
+    });
+  } catch (err) {
+    // If we can't even reach the api, surface that — the signIn would
+    // fail with the same root cause anyway.
+    const detail = `api_unreachable: ${(err as Error).message} (tried ${API_BASE})`;
+    redirect(`/login?error=${encodeURIComponent(detail)}`);
+  }
+
+  try {
+    await signIn("credentials", {
+      email: SKIP_EMAIL,
+      password: SKIP_PASSWORD,
+      redirectTo: "/engagements",
+    });
+  } catch (err) {
+    if ((err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT")) throw err;
+    redirect(`/login?error=${encodeURIComponent(`skip_failed: ${(err as Error).message ?? "unknown"}`)}`);
   }
 }
 
@@ -60,6 +99,22 @@ export default async function LoginPage({ searchParams }: Props) {
         )}
         <Button type="submit" className="w-full">Sign in</Button>
       </form>
+
+      <div className="my-4 flex items-center gap-3 text-xs text-fg-subtle">
+        <span className="h-px flex-1 bg-border" />
+        <span>or</span>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+
+      <form action={skipAction}>
+        <Button type="submit" variant="outline" className="w-full">
+          Skip — try as Demo User
+        </Button>
+        <p className="mt-2 text-center text-xs text-fg-subtle">
+          Bypasses sign-in with a shared demo account. Don't store anything private.
+        </p>
+      </form>
+
       <p className="mt-6 text-center text-sm text-fg-muted">
         No account?{" "}
         <Link href="/register" className="text-brand hover:underline">
