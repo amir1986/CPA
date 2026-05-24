@@ -16,11 +16,7 @@ services:
     name: cpa-api
     env: python
     plan: free
-    # Install [parse] extras (pdfplumber, python-docx, openpyxl, rapidfuzz)
-    # so the USGAAP <> IFRS orchestrator can extract text from uploaded
-    # PDF / DOCX / XLSX files. The added ~25 MB stays well under the
-    # 512 MB build OOM threshold.
-    buildCommand: pip install --upgrade pip && pip install '.[parse]'
+    buildCommand: pip install --upgrade pip && pip install .
     # `python -m alembic` / `python -m uvicorn` avoid depending on
     # Render putting the venv's bin/ on PATH (which silently failed —
     # `alembic upgrade head` was returning 127 with no stderr).
