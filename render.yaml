@@ -25,10 +25,14 @@ services:
     # tell us which step we're at when the next deploy log is read.
     startCommand: |
       bash -c '
+        exec 2>&1
         set -e
         echo "[start] pwd=$(pwd)"
         echo "[start] python=$(command -v python || echo MISSING)"
         echo "[start] alembic.ini exists? $(test -f alembic.ini && echo yes || echo NO)"
+        echo "[start] alembic module check:"
+        python -c "import alembic, sys; print(f\"  alembic={alembic.__version__} python={sys.version}\")"
+        echo "[start] DATABASE_URL host=${DATABASE_URL%@*}@..."
         echo "[start] running migrations..."
         python -m alembic upgrade head
         echo "[start] migrations done; starting uvicorn on :${PORT:-10000}"
