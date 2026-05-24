@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -47,7 +47,7 @@ async def run_agent_endpoint(
         ],
         final_answer=result.final_answer,
         citations=result.citations,
-        created_at=datetime.now(tz=timezone.utc),
+        created_at=datetime.now(tz=UTC),
     )
     session.add(row)
     await session.flush()

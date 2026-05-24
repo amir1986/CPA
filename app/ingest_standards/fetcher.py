@@ -26,8 +26,8 @@ import json
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable
 from urllib.parse import urlparse
 
 import httpx

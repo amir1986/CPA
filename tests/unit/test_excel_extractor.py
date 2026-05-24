@@ -8,7 +8,7 @@ import pytest
 
 openpyxl = pytest.importorskip("openpyxl")
 
-from app.ingest_docs.extractors.excel import extract_gl, extract_trial_balance
+from app.ingest_docs.extractors.excel import extract_gl, extract_trial_balance  # noqa: E402
 
 
 def _build_workbook(rows: list[list]) -> bytes:

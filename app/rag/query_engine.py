@@ -43,7 +43,9 @@ async def answer_question(
         from app.telemetry import REFUSALS, RETRIEVAL_SCORE, tracer
     except Exception:  # pragma: no cover
         REFUSALS = RETRIEVAL_SCORE = None  # type: ignore[assignment]
-        tracer = lambda name="cpa": _NullTracer()  # type: ignore[assignment]
+
+        def tracer(name: str = "cpa") -> _NullTracer:  # type: ignore[no-redef]
+            return _NullTracer()
 
     settings = get_settings()
     top_k = top_k or settings.retrieval_top_k
@@ -160,7 +162,7 @@ def _parse_json(text: str) -> dict[str, Any]:
 class _NullTracer:
     """Used when OpenTelemetry isn't available (unit tests)."""
 
-    def start_as_current_span(self, name, attributes=None):  # noqa: D401, ANN001
+    def start_as_current_span(self, name, attributes=None):
         return _NullSpanCtx()
 
 

@@ -10,7 +10,7 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import bcrypt
@@ -47,7 +47,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def _now() -> int:
-    return int(datetime.now(tz=timezone.utc).timestamp())
+    return int(datetime.now(tz=UTC).timestamp())
 
 
 def issue_access_token(*, user_id: str, firm_id: str, role: str) -> str:
@@ -129,4 +129,4 @@ def email_tokens_equal(a: str, b: str) -> bool:
 
 
 def expiry(seconds: int) -> datetime:
-    return datetime.now(tz=timezone.utc) + timedelta(seconds=seconds)
+    return datetime.now(tz=UTC) + timedelta(seconds=seconds)

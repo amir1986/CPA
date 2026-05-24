@@ -16,15 +16,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-        with: { version: "0.5.4" }
-      - run: uv python install 3.12
-      - name: Install
-        run: uv sync --frozen --no-dev || uv sync --no-dev
-      - name: Install dev deps
-        run: uv sync --group dev || uv sync
-      - run: uv run ruff check .
-      - run: uv run pytest tests/unit -q
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install (with all extras + pytest)
+        # Install every optional extra so tests that import modules behind
+        # the [parse]/[agent]/[crawl]/[s3] groups (e.g. rapidfuzz in
+        # app.reconcile.bank, openpyxl in the Excel extractor, etc.) don't
+        # ImportError at collection time. The free-tier deploy itself uses
+        # the lean core only — that's separate.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[agent,parse,crawl,s3]" \
+            pytest pytest-asyncio pytest-cov ruff
+      - run: ruff check .
+      - run: pytest tests/unit -q
 
   # ──────────────── Frontend type-check + unit ────────────────
   web-build:

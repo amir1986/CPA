@@ -16,7 +16,6 @@ import math
 import os
 from typing import Protocol
 
-
 HASH_DIM = 256
 
 

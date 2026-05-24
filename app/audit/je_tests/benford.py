@@ -6,8 +6,8 @@ the *least-expected* digits (those with observed_pct ≥ expected_pct + 0.05).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from app.analyze.anomalies import BENFORD_EXPECTED, benford_first_digit, first_digit
 

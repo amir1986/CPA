@@ -21,6 +21,8 @@ from typing import Any
 from app.agent.agent import (  # re-used data shapes
     AgentResult,
     ToolCallEvent,
+)
+from app.agent.agent import (
     run_agent as run_simple_agent,
 )
 from app.agent.tools import Tool

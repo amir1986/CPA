@@ -13,7 +13,8 @@ backend — including the deterministic FakeLLM in tests — is compatible.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncGenerator, Generator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from llama_index.core.bridge.pydantic import Field
 from llama_index.core.llms import (

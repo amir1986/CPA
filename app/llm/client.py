@@ -16,8 +16,9 @@ import json
 import logging
 import os
 import random
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import AsyncIterator, Protocol
+from typing import Protocol
 
 import httpx
 
@@ -161,28 +162,27 @@ class OllamaCloudLLM:
         payload = _chat_payload(self._model, prompt, system=system, stream=True)
         state = self._rotator.acquire()
         headers = {"Authorization": f"Bearer {state.key}", "Content-Type": "application/json"}
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            async with client.stream(
-                "POST", f"{self._base_url}/api/chat", json=payload, headers=headers
-            ) as resp:
-                if resp.status_code != 200:
-                    if resp.status_code == 429:
-                        self._rotator.report_rate_limited(state.key)
-                    elif resp.status_code in (401, 403):
-                        self._rotator.report_unauthorized(state.key)
-                    else:
-                        self._rotator.report_server_error(state.key)
-                    resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        evt = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    delta = evt.get("message", {}).get("content")
-                    if delta:
-                        yield delta
+        async with httpx.AsyncClient(timeout=self._timeout) as client, client.stream(
+            "POST", f"{self._base_url}/api/chat", json=payload, headers=headers
+        ) as resp:
+            if resp.status_code != 200:
+                if resp.status_code == 429:
+                    self._rotator.report_rate_limited(state.key)
+                elif resp.status_code in (401, 403):
+                    self._rotator.report_unauthorized(state.key)
+                else:
+                    self._rotator.report_server_error(state.key)
+                resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                delta = evt.get("message", {}).get("content")
+                if delta:
+                    yield delta
         self._rotator.report_success(state.key)
 
 

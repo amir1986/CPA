@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 SYSTEM_EN = """You are a CPA AI Assistant. Answer accounting / auditing / tax
 questions strictly from the provided source excerpts. Every factual claim must
 be backed by a citation drawn from the SOURCES list. If the sources do not

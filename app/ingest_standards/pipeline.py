@@ -10,16 +10,15 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Awaitable, Callable
+from datetime import UTC, datetime
 
 from app.domain.models import Chunk
 from app.embeddings import get_embedder
 from app.ingest_standards.registry import Source
 from app.rag.chunker import chunk_text
 from app.rag.vector_store import CPA_KNOWLEDGE, StoredPoint, get_vector_store
-
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +55,7 @@ async def ingest_source(
 
     docs = await fetcher(source)
     points: list[StoredPoint] = []
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
 
     for doc in docs:
         for piece in chunk_text(doc.text):

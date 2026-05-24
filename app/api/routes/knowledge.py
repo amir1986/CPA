@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from app.api.auth import RequestPrincipal, current_principal
 from app.rag.knowledge_graph import build_graph
 
-
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 

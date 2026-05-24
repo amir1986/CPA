@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any
-
 import httpx
 import pytest
 
 from app.ingest_standards.fetcher import FetchOptions, http_fetch
 from app.ingest_standards.registry import Source
-from app.storage.s3 import MemoryObjectStore, reset_object_store
-
+from app.storage.s3 import reset_object_store
 
 SOURCE = Source(
     id="fixture_src",

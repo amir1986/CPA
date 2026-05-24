@@ -15,7 +15,6 @@ import string
 from dataclasses import dataclass
 from pathlib import Path
 
-
 DRAFT_BANNER = "> **DRAFT — REQUIRES PARTNER REVIEW**\n"
 
 

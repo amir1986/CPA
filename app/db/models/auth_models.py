@@ -35,7 +35,7 @@ class Firm(Base, TimestampMixin):
     default_jurisdiction: Mapped[str | None] = mapped_column(String(8), nullable=True)
     base_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
-    users: Mapped[list["User"]] = relationship(back_populates="firm")
+    users: Mapped[list[User]] = relationship(back_populates="firm")
 
 
 class User(Base, TimestampMixin):
@@ -56,7 +56,7 @@ class User(Base, TimestampMixin):
     last_login_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     firm: Mapped[Firm] = relationship(back_populates="users")
-    tweaks: Mapped["UserTweaks | None"] = relationship(back_populates="user", uselist=False)
+    tweaks: Mapped[UserTweaks | None] = relationship(back_populates="user", uselist=False)
 
 
 class UserTweaks(Base, TimestampMixin):

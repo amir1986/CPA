@@ -6,7 +6,8 @@ import enum
 import uuid
 from datetime import date
 
-from sqlalchemy import Date, Enum as SAEnum, ForeignKey, Numeric, String
+from sqlalchemy import Date, ForeignKey, Numeric, String
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,7 +42,7 @@ class Client(Base, TimestampMixin):
     base_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     fy_end: Mapped[date | None] = mapped_column(Date, nullable=True)
 
-    engagements: Mapped[list["Engagement"]] = relationship(back_populates="client")
+    engagements: Mapped[list[Engagement]] = relationship(back_populates="client")
 
 
 class Engagement(Base, TimestampMixin):

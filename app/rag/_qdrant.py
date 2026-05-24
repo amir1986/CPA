@@ -10,7 +10,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.domain.models import Chunk, RetrievedChunk
-from app.rag.vector_store import CPA_KNOWLEDGE, ENGAGEMENT_DOCS, StoredPoint, VectorStore
+from app.rag.vector_store import StoredPoint, VectorStore
 
 
 class QdrantVectorStore(VectorStore):
@@ -39,7 +39,8 @@ class QdrantVectorStore(VectorStore):
             collection_name=collection,
             vectors_config=qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
         )
-        # Common payload indexes.
+        # Common payload indexes (best-effort — duplicate-index errors are fine).
+        import contextlib
         for field, typ in (
             ("source_id", "keyword"),
             ("jurisdiction", "keyword"),
@@ -47,10 +48,8 @@ class QdrantVectorStore(VectorStore):
             ("language", "keyword"),
             ("standard", "keyword"),
         ):
-            try:
+            with contextlib.suppress(Exception):
                 await self._client.create_payload_index(collection, field_name=field, field_schema=typ)
-            except Exception:
-                pass
         self._initialized.add(collection)
 
     async def upsert(self, collection: str, points: list[StoredPoint]) -> None:

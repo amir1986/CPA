@@ -11,7 +11,7 @@ a live MinIO.
 from __future__ import annotations
 
 import os
-from typing import Any, BinaryIO, Protocol
+from typing import Any, Protocol
 
 from app.config import get_settings
 

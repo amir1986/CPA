@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,11 +52,11 @@ async def patch_tweaks(
         raise ApiError(status=400, code="bad_request", detail="admin key has no per-user tweaks")
     t = await session.get(UserTweaks, principal.user_id)
     if t is None:
-        t = UserTweaks(user_id=principal.user_id, updated_at=datetime.now(tz=timezone.utc))
+        t = UserTweaks(user_id=principal.user_id, updated_at=datetime.now(tz=UTC))
         session.add(t)
     data = payload.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(t, k, v)
-    t.updated_at = datetime.now(tz=timezone.utc)
+    t.updated_at = datetime.now(tz=UTC)
     await session.flush()
     return _out(t)

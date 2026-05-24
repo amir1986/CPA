@@ -16,7 +16,6 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-
 TB_HEADERS = {
     "account_code": ["code", "account code", "acct", "acct code", "account no"],
     "account_name": ["account", "name", "account name", "description"],

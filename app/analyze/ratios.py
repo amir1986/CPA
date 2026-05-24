@@ -7,9 +7,9 @@ numerator and denominator pre-computed so the UI can show the breakdown.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-from typing import Callable
 
 from app.domain.models import RatioResult
 

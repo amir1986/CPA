@@ -118,10 +118,21 @@ select = [
     "SIM",                   # simplify
     "RUF",                   # ruff
 ]
-ignore = ["E501"]            # line length handled by formatter
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # function call in default arg — FastAPI's Depends()/Header() pattern
+    "UP042",  # str-enum (we use class Enum(str, Enum) intentionally for clarity)
+    "UP035",  # deprecated-import warnings on typing — too noisy across pre-3.10 patterns
+    "SIM102", # collapsible-if — readability tradeoff
+    "SIM108", # if-else → ternary — sometimes the if-else is clearer
+    "SIM117", # nested with — async with patterns
+    "B007",   # unused loop variable — legitimate when iterating for side effect
+    "RUF001", # ambiguous unicode — we use em-dashes intentionally
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["B018"]
+"tests/**" = ["B018", "B905", "E731", "F841", "SIM103", "SIM105"]
+"migrations/**" = ["E402", "F401"]
 
 [tool.mypy]
 python_version = "3.12"

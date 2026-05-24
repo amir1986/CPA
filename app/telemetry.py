@@ -133,7 +133,7 @@ def setup_telemetry(app: FastAPI) -> None:
         from app.db.session import get_engine
 
         SQLAlchemyInstrumentor().instrument(engine=get_engine().sync_engine)
-    except Exception as exc:  # noqa: BLE001 — DB not available in some test paths
+    except Exception as exc:
         logger.info("sqlalchemy instrumentation skipped: %s", exc)
 
     @app.get("/metrics", include_in_schema=False)

@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 

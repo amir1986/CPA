@@ -20,11 +20,9 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Iterable
 
 from app.domain.models import Chunk
 from app.rag.vector_store import CPA_KNOWLEDGE, MemoryVectorStore, VectorStore, get_vector_store
-
 
 # Concept → matching regex (case-insensitive). Lifted from the Compare screen's
 # topic picker so the two stay in sync.

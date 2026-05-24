@@ -15,12 +15,11 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
 from app.agent.tools import Tool
 from app.llm.client import LLMClient
 from app.rag.prompts import SYSTEM_EN
-
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +95,7 @@ async def run_agent(
         args = parsed.get("arguments") or {}
         try:
             result = await tools_by_name[tool_name].fn(args)
-        except Exception as exc:  # noqa: BLE001 — surfacing to history is intentional
+        except Exception as exc:
             logger.exception("tool %s raised", tool_name)
             history.append({"tool": tool_name, "arguments": args, "error": str(exc)})
             continue

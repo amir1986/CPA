@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -54,7 +54,7 @@ async def query(
             language=result.language,
             citations=[c.__dict__ for c in result.citations],
             refused=result.refused,
-            created_at=datetime.now(tz=timezone.utc),
+            created_at=datetime.now(tz=UTC),
         )
     )
 
@@ -104,7 +104,7 @@ async def query_stream(
         # Yield in ~24-char pieces so a UI sees progressive deltas.
         for i in range(0, len(chunk), 24):
             piece = chunk[i : i + 24]
-            yield f"event: token\ndata: {json.dumps({'delta': piece})}\n\n".encode("utf-8")
+            yield f"event: token\ndata: {json.dumps({'delta': piece})}\n\n".encode()
             await asyncio.sleep(0)
         # One citation event per validated citation.
         for c in result.citations:
@@ -114,10 +114,10 @@ async def query_stream(
                 "url": c.url,
                 "quote": c.quote,
             }
-            yield f"event: citation\ndata: {json.dumps(data)}\n\n".encode("utf-8")
+            yield f"event: citation\ndata: {json.dumps(data)}\n\n".encode()
         # Done.
         done = {"refused": result.refused, "language": result.language}
-        yield f"event: done\ndata: {json.dumps(done)}\n\n".encode("utf-8")
+        yield f"event: done\ndata: {json.dumps(done)}\n\n".encode()
 
     return StreamingResponse(
         gen(),

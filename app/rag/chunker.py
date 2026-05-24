@@ -11,7 +11,6 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-
 DEFAULT_TARGET_WORDS = 320
 DEFAULT_OVERLAP_WORDS = 50
 

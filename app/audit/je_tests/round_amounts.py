@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def is_round(amount: float, *, units: int = 1000) -> bool:
@@ -18,7 +18,7 @@ def round_amount_hits(entries: Sequence[object], *, units: int = 1000) -> list[d
         amt = float(getattr(e, "amount", 0.0))
         if is_round(amt, units=units):
             out.append({
-                "entry_id": getattr(e, "id"),
+                "entry_id": e.id,
                 "amount": amt,
                 "reason": f"amount is an exact multiple of {units}",
             })

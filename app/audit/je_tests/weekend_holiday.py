@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from datetime import date
-from typing import Iterable, Sequence
 
 
 # Saturday=5, Sunday=6. Israeli week typically Fri+Sat — caller picks via ``weekend_days``.
@@ -23,7 +23,7 @@ def weekend_holiday_hits(
             continue
         if d.weekday() in weekend_set or d in holidays_set:
             out.append({
-                "entry_id": getattr(e, "id"),
+                "entry_id": e.id,
                 "je_date": str(d),
                 "amount": float(getattr(e, "amount", 0.0)),
                 "reason": "posted on weekend" if d.weekday() in weekend_set else "posted on public holiday",

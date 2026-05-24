@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 
-from app.embeddings import HashEmbedder, get_embedder, reset_embedder
+from app.embeddings import reset_embedder
 from app.ingest_standards.pipeline import FetchedDocument, ingest_source
 from app.ingest_standards.registry import Source
 from app.llm.client import FakeLLM
 from app.rag.query_engine import answer_question
-from app.rag.vector_store import MemoryVectorStore, reset_vector_store
+from app.rag.vector_store import reset_vector_store
 
 
 @pytest.fixture(autouse=True)

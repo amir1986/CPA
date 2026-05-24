@@ -6,7 +6,7 @@ Combined into one router file because each handler is small.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
@@ -108,7 +108,7 @@ async def draw_sample(
         sample_ids=list(result.selected),
         seed=result.seed,
         performance_materiality=payload.performance_materiality,
-        drawn_at=datetime.now(tz=timezone.utc),
+        drawn_at=datetime.now(tz=UTC),
     )
     session.add(row)
     await session.flush()
@@ -171,7 +171,7 @@ async def run_je_test(
         filters=payload.model_dump(exclude_none=True),
         hits_count=len(hits),
         hits=hits,
-        ran_at=datetime.now(tz=timezone.utc),
+        ran_at=datetime.now(tz=UTC),
         ran_by=principal.user_id if principal.user_id.int != 0 else None,
     )
     session.add(run)
@@ -215,7 +215,7 @@ async def generate_workpaper(
         payload.template,
         inputs={
             "title": payload.title,
-            "generated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+            "generated_at": datetime.now(tz=UTC).isoformat(timespec="seconds"),
             **payload.inputs,
         },
         references=payload.references,

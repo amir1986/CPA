@@ -8,9 +8,10 @@ import json
 import logging
 import mimetypes
 import uuid
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, File as FileParam, Form, UploadFile, status
+from fastapi import APIRouter, Depends, Form, UploadFile, status
+from fastapi import File as FileParam
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession

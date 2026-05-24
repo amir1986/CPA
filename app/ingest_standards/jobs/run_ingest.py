@@ -18,7 +18,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from typing import Iterable
+from collections.abc import Iterable
 
 from app.ingest_standards.discovery import discover_urls
 from app.ingest_standards.fetcher import FetchOptions, http_fetch
@@ -91,7 +91,7 @@ async def main_async() -> int:
     for source in _sources_to_run(args.source):
         try:
             total += await _run_one(source, full_resync=args.full_resync, dry_run=args.dry_run, opts=opts)
-        except Exception:  # noqa: BLE001 — log and continue with other sources
+        except Exception:
             logger.exception("ingest failed for %s", source.id)
     return total
 

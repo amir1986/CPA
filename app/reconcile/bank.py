@@ -10,9 +10,9 @@ Returns matched pairs + lists of unmatched entries on either side.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
-from typing import Sequence
+from datetime import date
 
 from rapidfuzz import fuzz
 

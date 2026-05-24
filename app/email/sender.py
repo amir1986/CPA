@@ -9,10 +9,9 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import List
+from email.message import EmailMessage
 
 import aiosmtplib
-from email.message import EmailMessage
 
 from app.config import get_settings
 
@@ -26,10 +25,10 @@ class SentMessage:
     body: str
 
 
-_memory_sink: List[SentMessage] = []
+_memory_sink: list[SentMessage] = []
 
 
-def memory_sink() -> List[SentMessage]:
+def memory_sink() -> list[SentMessage]:
     return _memory_sink
 
 

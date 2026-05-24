@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def late_posting_hits(entries: Sequence[object], *, max_lag_days: int = 5) -> list[dict]:
@@ -15,7 +15,7 @@ def late_posting_hits(entries: Sequence[object], *, max_lag_days: int = 5) -> li
         lag = (posting_date - je_date).days
         if lag > max_lag_days:
             out.append({
-                "entry_id": getattr(e, "id"),
+                "entry_id": e.id,
                 "je_date": str(je_date),
                 "posting_date": str(posting_date),
                 "lag_days": lag,

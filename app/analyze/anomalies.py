@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import math
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Sequence
-
 
 BENFORD_EXPECTED = {
     1: 0.301, 2: 0.176, 3: 0.125, 4: 0.097, 5: 0.079,

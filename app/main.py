@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.errors import register_error_handlers
-from app.logging_setup import configure_logging
-from app.telemetry import setup_telemetry
 from app.api.routes import (
     admin,
     agent_route,
@@ -30,6 +28,8 @@ from app.api.routes import (
     tweaks,
 )
 from app.config import get_settings
+from app.logging_setup import configure_logging
+from app.telemetry import setup_telemetry
 
 
 @asynccontextmanager
@@ -51,8 +51,6 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
-
-    settings = get_settings()
 
     # CORS — local dev hosts + any explicit `CPA_CORS_ORIGINS` (comma-separated)
     # + every *.vercel.app subdomain (the typical web host) via regex. The web

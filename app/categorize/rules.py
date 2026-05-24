@@ -9,8 +9,9 @@ unmatched lines fall through to the LLM classifier.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -28,9 +29,8 @@ class Rule:
             return False
         if (hi := self.spec.get("amount_max")) is not None and amount > hi:
             return False
-        if (cur := self.spec.get("currency")) is not None and (currency or "").upper() != cur.upper():
-            return False
-        return True
+        cur = self.spec.get("currency")
+        return not (cur is not None and (currency or "").upper() != cur.upper())
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ def apply_rules(
             continue
         suggestions.append(
             Suggestion(
-                entry_id=getattr(e, "id"),
+                entry_id=e.id,
                 account_id=matched.account_id,
                 confidence=matched.confidence,
                 source="rule",

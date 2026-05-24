@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
@@ -114,7 +114,7 @@ async def register(
         kind=AuthTokenKind.verify_email,
         token_hash=digest,
         expires_at=expiry(VERIFY_TTL),
-        created_at=datetime.now(tz=timezone.utc),
+        created_at=datetime.now(tz=UTC),
     )
     session.add(token_row)
     await session.flush()
@@ -138,7 +138,7 @@ async def login(
     user = await session.scalar(select(User).where(User.email == payload.email.lower()))
     if user is None or not verify_password(payload.password, user.password_hash):
         raise ApiError(status=401, code="invalid_credentials", detail="email or password is incorrect")
-    user.last_login_at = datetime.now(tz=timezone.utc)
+    user.last_login_at = datetime.now(tz=UTC)
     await session.flush()
     return LoginOut(tokens=_tokens(user), user=_user_out(user))
 
@@ -170,7 +170,7 @@ async def verify(
             AuthToken.kind == AuthTokenKind.verify_email,
         )
     )
-    if row is None or row.used_at is not None or row.expires_at < datetime.now(tz=timezone.utc):
+    if row is None or row.used_at is not None or row.expires_at < datetime.now(tz=UTC):
         raise ApiError(status=400, code="invalid_token", detail="link is invalid or expired")
     if not email_tokens_equal(row.token_hash, digest):
         raise ApiError(status=400, code="invalid_token", detail="link is invalid or expired")
@@ -178,8 +178,8 @@ async def verify(
     user = await session.get(User, row.user_id)
     if user is None:
         raise ApiError(status=400, code="invalid_token", detail="user no longer exists")
-    user.email_verified_at = datetime.now(tz=timezone.utc)
-    row.used_at = datetime.now(tz=timezone.utc)
+    user.email_verified_at = datetime.now(tz=UTC)
+    row.used_at = datetime.now(tz=UTC)
     return MessageOut(detail="email verified")
 
 
@@ -198,7 +198,7 @@ async def reset_request(
                 kind=AuthTokenKind.password_reset,
                 token_hash=digest,
                 expires_at=expiry(RESET_TTL),
-                created_at=datetime.now(tz=timezone.utc),
+                created_at=datetime.now(tz=UTC),
             )
         )
         await session.flush()
@@ -224,13 +224,13 @@ async def reset_confirm(
             AuthToken.kind == AuthTokenKind.password_reset,
         )
     )
-    if row is None or row.used_at is not None or row.expires_at < datetime.now(tz=timezone.utc):
+    if row is None or row.used_at is not None or row.expires_at < datetime.now(tz=UTC):
         raise ApiError(status=400, code="invalid_token", detail="link is invalid or expired")
     user = await session.get(User, row.user_id)
     if user is None:
         raise ApiError(status=400, code="invalid_token", detail="user no longer exists")
     user.password_hash = hash_password(payload.new_password)
-    row.used_at = datetime.now(tz=timezone.utc)
+    row.used_at = datetime.now(tz=UTC)
     return MessageOut(detail="password updated")
 
 

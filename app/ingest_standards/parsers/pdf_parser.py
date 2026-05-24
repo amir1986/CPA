@@ -65,8 +65,8 @@ def _fix_rtl_lines(text: str) -> str:
 
 def _ocr_pdf(raw: bytes, *, is_hebrew: bool) -> str:  # pragma: no cover — heavy deps
     try:
-        from pdf2image import convert_from_bytes
         import pytesseract
+        from pdf2image import convert_from_bytes
     except ImportError:
         return ""
     lang = "heb+eng" if is_hebrew else "eng"

@@ -19,7 +19,6 @@ from dataclasses import dataclass
 
 from app.domain.models import Citation, RetrievedChunk
 
-
 _NORMALIZE = re.compile(r"\s+")
 
 

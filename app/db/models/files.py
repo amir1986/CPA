@@ -5,7 +5,8 @@ from __future__ import annotations
 import enum
 import uuid
 
-from sqlalchemy import BigInteger, Enum as SAEnum, ForeignKey, String
+from sqlalchemy import BigInteger, ForeignKey, String
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 

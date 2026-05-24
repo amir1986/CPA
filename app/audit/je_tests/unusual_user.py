@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def unusual_user_hits(entries: Sequence[object], *, rare_threshold: int = 3) -> list[dict]:
@@ -25,7 +25,7 @@ def unusual_user_hits(entries: Sequence[object], *, rare_threshold: int = 3) -> 
             reasons.append(f"rare preparer ({preparer}, n={counts[preparer]})")
         if reasons:
             out.append({
-                "entry_id": getattr(e, "id"),
+                "entry_id": e.id,
                 "amount": float(getattr(e, "amount", 0.0)),
                 "preparer": preparer,
                 "approver": approver,

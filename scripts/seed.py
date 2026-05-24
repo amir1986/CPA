@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -36,7 +36,7 @@ async def main() -> None:
                 password_hash=hash_password(DEV_PASSWORD),
                 role=UserRole.admin,
                 name="Dev Admin",
-                email_verified_at=datetime.now(tz=timezone.utc),
+                email_verified_at=datetime.now(tz=UTC),
             )
         )
         await s.commit()
