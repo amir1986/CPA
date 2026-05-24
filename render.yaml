@@ -80,12 +80,13 @@ services:
     env: node
     plan: free
     rootDir: web
-    # Install pnpm via npm (works on every Render Node image; corepack
-    # sometimes needs write perms it doesn't have). --no-frozen-lockfile
-    # so a lockfile-version mismatch can't fail the install.
+    # corepack ships with Node 22 — faster than `npm install -g pnpm`.
+    # --frozen-lockfile uses pnpm-lock.yaml directly (no resolution step)
+    # so the install step takes ~30 s instead of ~90 s.
     buildCommand: |
-      npm install -g pnpm@10.33.0
-      pnpm install --no-frozen-lockfile
+      corepack enable
+      corepack prepare pnpm@10.33.0 --activate
+      pnpm install --frozen-lockfile
       pnpm build
     startCommand: pnpm start
     healthCheckPath: /api/health
