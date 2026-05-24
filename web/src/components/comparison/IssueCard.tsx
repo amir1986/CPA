@@ -12,6 +12,8 @@ export type IssueData = {
   ifrs_citations: ChipCitation[];
   differences: string | null;
   conversion_impact: string | null;
+  gaap_verification: string | null;
+  ifrs_verification: string | null;
 };
 
 export function IssueCard({ issue, currentFramework }: { issue: IssueData; currentFramework: "US" | "IFRS" }) {
@@ -20,6 +22,8 @@ export function IssueCard({ issue, currentFramework }: { issue: IssueData; curre
   const otherCites = isUS ? issue.ifrs_citations : issue.gaap_citations;
   const currentStandardsSummary = isUS ? issue.gaap_summary : issue.ifrs_summary;
   const otherStandardsSummary = isUS ? issue.ifrs_summary : issue.gaap_summary;
+  const currentVerif = isUS ? issue.gaap_verification : issue.ifrs_verification;
+  const otherVerif = isUS ? issue.ifrs_verification : issue.gaap_verification;
   const currentLabel = isUS ? "US GAAP (current)" : "IFRS (current)";
   const otherLabel = isUS ? "IFRS (converted to)" : "US GAAP (converted to)";
 
@@ -44,12 +48,14 @@ export function IssueCard({ issue, currentFramework }: { issue: IssueData; curre
           standardsCites={currentCites}
           userCites={issue.current_user_cites}
           policySummary={issue.current_summary}
+          verification={currentVerif}
         />
         <Pane
           label={otherLabel}
           tone="other"
           standardsSummary={otherStandardsSummary}
           standardsCites={otherCites}
+          verification={otherVerif}
         />
       </div>
 
@@ -78,6 +84,7 @@ function Pane({
   standardsCites,
   userCites,
   policySummary,
+  verification,
 }: {
   label: string;
   tone: "current" | "other";
@@ -85,6 +92,7 @@ function Pane({
   standardsCites: ChipCitation[];
   userCites?: { ref: string; anchor: string; quote: string }[];
   policySummary?: string;
+  verification?: string | null;
 }) {
   return (
     <section
@@ -119,11 +127,35 @@ function Pane({
       <p className="mt-1 whitespace-pre-wrap text-sm">
         {standardsSummary ?? <span className="text-fg-muted">_(no standards retrieved — corpus may be empty)_</span>}
       </p>
+
+      {/* Verbatim cited paragraphs from the standards, shown inline beneath
+          the summary so the source is right next to the implementation. */}
       {standardsCites.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="mt-3 space-y-2">
+          <p className="text-xs uppercase text-fg-subtle">Source paragraphs (verbatim)</p>
           {standardsCites.map((c, i) => (
-            <CiteChip key={i} citation={c} />
+            <blockquote
+              key={i}
+              className="rounded-md border-s-2 border-border-strong bg-bg-elev px-3 py-2 text-xs"
+            >
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <CiteChip citation={c} />
+              </div>
+              {c.quote && (
+                <p className="whitespace-pre-wrap italic text-fg">&ldquo;{c.quote}&rdquo;</p>
+              )}
+            </blockquote>
           ))}
+        </div>
+      )}
+
+      {verification && (
+        <div
+          className="mt-3 rounded-md border border-warning/40 bg-warning/5 p-2 text-xs"
+          data-testid="verifier-report"
+        >
+          <p className="mb-1 font-medium text-warning">Verifier agent</p>
+          <p className="whitespace-pre-wrap text-fg">{verification}</p>
         </div>
       )}
     </section>

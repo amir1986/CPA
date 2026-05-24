@@ -232,6 +232,8 @@ export type ComparisonIssue = {
   ifrs_citations: Citation[];
   differences: string | null;
   conversion_impact: string | null;
+  gaap_verification: string | null;
+  ifrs_verification: string | null;
 };
 
 export type ComparisonRunDetail = {

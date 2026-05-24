@@ -403,6 +403,100 @@ async def _compare_one(topic: str, current_summary: str) -> tuple[QueryAnswer, Q
     )
 
 
+# ── Verifier agent ───────────────────────────────────────────────────────
+#
+# After each side's summary lands, a separate LLM call inspects it against
+# the EXACT verbatim quotes returned by kb_search and produces a short
+# narrative judging whether each claim is grounded in a quote, partially
+# grounded, or unsupported. This is the layer that catches hallucinated
+# claims the cited paragraphs don't actually support — critical when the
+# memo will end up in front of a partner.
+
+_VERIFY_PROMPT = """You are a CPA verifier. Read the SUMMARY and the verbatim QUOTES that were retrieved from the {framework} standards corpus. For each substantive claim in the summary, decide whether it is:
+
+  (a) FULLY SUPPORTED by one of the verbatim quotes (state which one),
+  (b) PARTIALLY SUPPORTED (the quote is related but doesn't fully establish the claim),
+  (c) NOT SUPPORTED (no quote backs the claim — possible hallucination).
+
+Then write a SHORT verification report (3-6 sentences) in plain prose. Start with an overall verdict ('Fully grounded', 'Partially grounded', 'Largely unsupported'), then enumerate any unsupported claims by topic. Do NOT repeat the entire summary. Do NOT add new citations.
+
+If the QUOTES list is empty, respond with exactly: 'No standards quotes were retrieved for this side — verification not possible. Treat the summary as based on the model''s general knowledge only.'
+
+SUMMARY:
+{summary}
+
+QUOTES (each line is one verbatim retrieved standards excerpt):
+{quotes}
+"""
+
+_VERIFY_TIMEOUT_S = 60.0
+
+
+async def _verify_one_side(
+    framework: str,
+    summary: str | None,
+    citations: list,
+    llm: LLMClient,
+) -> str | None:
+    """Run the verifier agent against a single side's summary + its cited
+    quotes. Returns a short prose verification report (3-6 sentences) that
+    the orchestrator persists and the PDF/UI surface alongside the summary.
+
+    Returns None when there's nothing to verify (no summary).
+    """
+    if not summary or not summary.strip():
+        return None
+    framework_name = "US GAAP (FASB ASC)" if framework == "US" else "IFRS / IAS"
+    if not citations:
+        # No quotes were retrieved — short-circuit with the canonical no-corpus
+        # message rather than burn an LLM call.
+        return (
+            f"No {framework_name} standards quotes were retrieved for this side "
+            "— verification not possible. Treat the summary as based on the "
+            "model's general knowledge only."
+        )
+    quote_lines: list[str] = []
+    for c in citations:
+        std = c.get("standard") if isinstance(c, dict) else getattr(c, "standard", None)
+        quote = c.get("quote") if isinstance(c, dict) else getattr(c, "quote", "")
+        if not quote:
+            continue
+        std_label = std or "(no standard)"
+        quote_lines.append(f"- [{std_label}] {quote}")
+    if not quote_lines:
+        return (
+            f"Citations were returned for {framework_name} but every quote was "
+            "empty — verification not possible against empty source text."
+        )
+    prompt = _VERIFY_PROMPT.format(
+        framework=framework_name,
+        summary=summary,
+        quotes="\n".join(quote_lines),
+    )
+    try:
+        response = await asyncio.wait_for(llm.complete(prompt), timeout=_VERIFY_TIMEOUT_S)
+    except Exception as exc:
+        logger.warning("verifier agent failed for %s: %r", framework, exc)
+        return f"(verifier agent failed: {exc})"
+    text = (response.text or "").strip()
+    return text or None
+
+
+async def _verify_both_sides(
+    topic: str,
+    gaap_summary: str | None,
+    gaap_citations: list,
+    ifrs_summary: str | None,
+    ifrs_citations: list,
+) -> tuple[str | None, str | None]:
+    """Run the verifier in parallel for both sides — one LLM call per side."""
+    llm = get_llm()
+    return await asyncio.gather(
+        _verify_one_side("US", gaap_summary, gaap_citations, llm),
+        _verify_one_side("IFRS", ifrs_summary, ifrs_citations, llm),
+    )
+
+
 async def run_orchestrator(run_id: uuid.UUID) -> None:
     """Drive the run from `parsing` → `detecting` → `comparing` → `done`/`failed`.
 
@@ -510,18 +604,37 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
                 logger.warning("comparison fan-out failed for topic %r: %s", topic, exc)
                 gaap_ans = ifrs_ans = None
 
+            gaap_summary = gaap_ans.answer if gaap_ans and not gaap_ans.refused else None
+            ifrs_summary = ifrs_ans.answer if ifrs_ans and not ifrs_ans.refused else None
+            gaap_cites = _citation_dicts(gaap_ans.citations) if gaap_ans else []
+            ifrs_cites = _citation_dicts(ifrs_ans.citations) if ifrs_ans else []
+
+            # Verifier agent — judges whether each side's summary is grounded
+            # in the verbatim quotes the retrieval returned. Runs both sides
+            # in parallel; failures degrade to a "(verifier failed)" string
+            # rather than break the orchestrator.
+            try:
+                gaap_verif, ifrs_verif = await _verify_both_sides(
+                    topic, gaap_summary, gaap_cites, ifrs_summary, ifrs_cites,
+                )
+            except Exception as exc:
+                logger.warning("verifier agent crashed for topic %r: %s", topic, exc)
+                gaap_verif = ifrs_verif = None
+
             row = ComparisonIssue(
                 run_id=run.id,
                 seq=seq,
                 topic=topic,
                 current_summary=current_summary,
                 current_user_cites=user_cites,
-                gaap_summary=(gaap_ans.answer if gaap_ans and not gaap_ans.refused else None),
-                gaap_citations=_citation_dicts(gaap_ans.citations) if gaap_ans else [],
-                ifrs_summary=(ifrs_ans.answer if ifrs_ans and not ifrs_ans.refused else None),
-                ifrs_citations=_citation_dicts(ifrs_ans.citations) if ifrs_ans else [],
+                gaap_summary=gaap_summary,
+                gaap_citations=gaap_cites,
+                ifrs_summary=ifrs_summary,
+                ifrs_citations=ifrs_cites,
                 differences=_derive_differences(gaap_ans, ifrs_ans),
                 conversion_impact=conversion_impact,
+                gaap_verification=gaap_verif,
+                ifrs_verification=ifrs_verif,
             )
             session.add(row)
 

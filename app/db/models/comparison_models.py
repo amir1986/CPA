@@ -82,3 +82,9 @@ class ComparisonIssue(Base, TimestampMixin):
     ifrs_citations: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
     differences: Mapped[str | None] = mapped_column(Text, nullable=True)
     conversion_impact: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Verifier-agent narratives: a separate LLM pass that compares each
+    # summary against its cited quotes and flags unsupported / hallucinated
+    # claims. NULL = verification not run (e.g. corpus empty, synthesis
+    # fallback produced no citations to check against).
+    gaap_verification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ifrs_verification: Mapped[str | None] = mapped_column(Text, nullable=True)

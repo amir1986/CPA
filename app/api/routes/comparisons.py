@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import RequestPrincipal
 from app.api.auth import current_principal_permissive as current_principal
 from app.api.errors import ApiError
-from app.audit.workpapers.renderer import render_pdf_bytes, render_template
+from app.audit.workpapers.renderer import render_pdf_bytes
 from app.db.models.comparison_models import (
     ComparisonIssue,
     ComparisonRun,
@@ -78,6 +78,8 @@ class IssueOut(BaseModel):
     ifrs_citations: list[dict]
     differences: str | None
     conversion_impact: str | None
+    gaap_verification: str | None = None
+    ifrs_verification: str | None = None
 
 
 class RunOut(BaseModel):
@@ -151,6 +153,8 @@ def _issue_out(i: ComparisonIssue) -> IssueOut:
         ifrs_citations=list(i.ifrs_citations or []),
         differences=i.differences,
         conversion_impact=i.conversion_impact,
+        gaap_verification=i.gaap_verification,
+        ifrs_verification=i.ifrs_verification,
     )
 
 
@@ -418,37 +422,18 @@ async def export_memo(
     generated_at = datetime.now(tz=UTC).isoformat(timespec="seconds")
     framework = (run.override_framework or run.detected_framework or Framework.US).value
     sections: list[str] = []
-    sections.append(f"# USGAAP <> IFRS comparison\n\n**Detected framework:** {framework}\n")
+    sections.append(
+        "> **DRAFT — REQUIRES PARTNER REVIEW**\n\n"
+        f"# USGAAP <> IFRS comparison\n\n"
+        f"**Detected framework:** {framework}\n"
+        f"**Generated:** {generated_at}\n"
+    )
     if run.confidence is not None:
         sections.append(f"**Detection confidence:** {run.confidence:.2f}\n")
     if run.rationale:
         sections.append(f"**Rationale:** {run.rationale}\n")
     for i in issues:
-        rendered = render_template(
-            "comparison_memo",
-            inputs={
-                "title": i.topic,
-                "topic": i.topic,
-                "generated_at": generated_at,
-                "gaap_summary": i.gaap_summary or "_(no US GAAP standards retrieved)_",
-                "gaap_citations": _format_citations(i.gaap_citations),
-                "ifrs_summary": i.ifrs_summary or "_(no IFRS standards retrieved)_",
-                "ifrs_citations": _format_citations(i.ifrs_citations),
-                "differences": (
-                    (i.differences or "See side-by-side comparison above.")
-                    + (f"\n\n**Conversion impact:** {i.conversion_impact}" if i.conversion_impact else "")
-                ),
-            },
-        )
-        # Also surface "From your document" citations the template doesn't slot.
-        user_cites_md = _format_user_cites(i.current_user_cites)
-        sections.append(
-            rendered.body_md
-            + "\n\n### From your document\n\n"
-            + (user_cites_md or "_(no source references)_")
-            + "\n\n**Current treatment summary:**\n"
-            + i.current_summary
-        )
+        sections.append(_format_issue_section(i))
     full = "\n\n---\n\n".join(sections)
 
     safe_name = f"usgaap-ifrs-comparison-{run.id}"
@@ -492,6 +477,97 @@ async def export_memo(
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.md"'},
     )
+
+
+def _format_issue_section(i: ComparisonIssue) -> str:
+    """Render one issue as a self-contained markdown section with the
+    EXACT source paragraphs (verbatim quotes) inline next to each side's
+    implementation summary, plus the verifier agent's correctness report.
+
+    Layout:
+      ## #{seq} {topic}
+      ### Current treatment (from your document)
+      <current_summary>
+      #### Source paragraphs from your document
+      > [anchor] verbatim text
+      ### US GAAP treatment
+      <gaap_summary>
+      #### Source paragraphs from US GAAP standards
+      > **standard ¶para** — url
+      > "verbatim quote"
+      #### Verifier agent
+      <gaap_verification>
+      ### IFRS treatment
+      ... (same shape)
+      ### Key differences
+      ### Conversion impact
+    """
+    parts: list[str] = []
+    parts.append(f"## #{i.seq} {i.topic}\n")
+
+    # --- Current treatment from the user's document ---
+    parts.append("### Current treatment (from your document)\n")
+    parts.append((i.current_summary or "_(no current treatment summary)_") + "\n")
+    if i.current_user_cites:
+        parts.append("#### Source paragraphs from your document\n")
+        for c in i.current_user_cites:
+            anchor = c.get("anchor") or c.get("ref") or "?"
+            quote = (c.get("quote") or "").strip()
+            parts.append(f"> **{anchor}**")
+            if quote:
+                parts.append(f"> {quote}")
+            parts.append("")  # blank line between cites
+
+    # --- US GAAP side ---
+    parts.append("### US GAAP treatment\n")
+    parts.append((i.gaap_summary or "_(no US GAAP standards retrieved)_") + "\n")
+    parts.append("#### Source paragraphs from US GAAP standards\n")
+    parts.append(_format_inline_cites(i.gaap_citations))
+    if i.gaap_verification:
+        parts.append("#### Verifier agent (US GAAP)\n")
+        parts.append(i.gaap_verification + "\n")
+
+    # --- IFRS side ---
+    parts.append("### IFRS treatment\n")
+    parts.append((i.ifrs_summary or "_(no IFRS standards retrieved)_") + "\n")
+    parts.append("#### Source paragraphs from IFRS standards\n")
+    parts.append(_format_inline_cites(i.ifrs_citations))
+    if i.ifrs_verification:
+        parts.append("#### Verifier agent (IFRS)\n")
+        parts.append(i.ifrs_verification + "\n")
+
+    # --- Differences + conversion impact ---
+    parts.append("### Key differences\n")
+    parts.append((i.differences or "_See side-by-side summaries above._") + "\n")
+    if i.conversion_impact:
+        parts.append("### Conversion impact\n")
+        parts.append(i.conversion_impact + "\n")
+
+    return "\n".join(parts)
+
+
+def _format_inline_cites(cites: list[dict]) -> str:
+    """Each cited paragraph is rendered as a labelled blockquote so it
+    visually sits next to the summary it backs. Verbatim quotes are
+    preserved in full — no truncation."""
+    if not cites:
+        return "_(none retrieved — see verifier note below)_\n"
+    out: list[str] = []
+    for c in cites:
+        std = c.get("standard") or "(no standard)"
+        para = c.get("paragraph")
+        url = c.get("url") or ""
+        quote = (c.get("quote") or "").strip()
+        header = f"> **{std}**"
+        if para:
+            header += f" ¶{para}"
+        out.append(header)
+        if quote:
+            out.append(f"> _\"{quote}\"_")
+        if url:
+            out.append(f"> source: {url}")
+        out.append("")
+    return "\n".join(out)
 
 
 def _format_citations(cites: list[dict]) -> str:
