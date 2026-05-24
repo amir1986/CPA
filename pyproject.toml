@@ -115,6 +115,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+# Include non-Python assets shipped inside the app/ package — currently just
+# the bundled DejaVu Sans TTF used by the workpaper PDF renderer for Hebrew /
+# CJK glyph support without depending on host fonts.
+[tool.hatch.build.targets.wheel.force-include]
+"app/audit/workpapers/fonts/DejaVuSans.ttf" = "app/audit/workpapers/fonts/DejaVuSans.ttf"
 
 [tool.ruff]
 line-length = 100

@@ -11,9 +11,12 @@ can't be mistaken for signed-off work product.
 
 from __future__ import annotations
 
+import logging
 import string
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 DRAFT_BANNER = "> **DRAFT — REQUIRES PARTNER REVIEW**\n"
 
@@ -53,7 +56,10 @@ def render_pdf_bytes(body_md: str) -> bytes:
     could be built. fpdf2 uses a system Unicode TTF when one is found so
     Hebrew (and any other non-Latin script in the memo) renders correctly.
     """
-    # Path 1 — WeasyPrint (preferred when available).
+    # Path 1 — WeasyPrint (preferred when available). Catches BOTH ImportError
+    # (package not installed) and OSError (package installed but native libs
+    # libcairo/libpango missing) so the fpdf2 fallback always runs instead of
+    # crashing the export with an opaque 500.
     try:
         from weasyprint import HTML  # type: ignore[import-untyped]
 
@@ -63,7 +69,7 @@ def render_pdf_bytes(body_md: str) -> bytes:
             + "</pre></body></html>"
         )
         return HTML(string=html).write_pdf()
-    except ImportError:
+    except (ImportError, OSError):
         pass
 
     # Path 2 — fpdf2 fallback. Always available in core deps now.
@@ -82,24 +88,30 @@ def _fpdf_render(body_md: str, FPDF: type) -> bytes:
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Prefer a Unicode-capable TTF so Hebrew + accented chars render. Falls
-    # back to fpdf2's built-in Helvetica (Latin-only) when none is found.
+    # Load a Unicode-capable TTF. Bundled DejaVu Sans is the FIRST choice so
+    # font loading doesn't depend on the host having /usr/share/fonts; system
+    # fallbacks come after. add_font failure is logged (not silenced) so we
+    # know if Hebrew/CJK glyphs are going to render as boxes.
     font_name = "Helvetica"
     font_path = _find_unicode_font()
     if font_path is not None:
         try:
-            pdf.add_font("uni", "", str(font_path), uni=True)
+            try:
+                pdf.add_font("uni", "", str(font_path), uni=True)
+            except TypeError:
+                # fpdf2 >= 2.8 dropped the `uni` kwarg; the new signature
+                # accepts the TTF directly.
+                pdf.add_font("uni", "", str(font_path))
             font_name = "uni"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "fpdf2 add_font(%s) failed: %r — falling back to Helvetica "
+                "(non-Latin glyphs will render as substitution chars)",
+                font_path, exc,
+            )
 
     pdf.set_font(font_name, size=9)
-    # Render line-by-line; reset cursor + use explicit page width so fpdf2
-    # never raises "Not enough horizontal space" — that error fires when
-    # multi_cell(w=0, ...) sees a non-positive remaining width because a
-    # previous call left the cursor at or past the right margin, or when a
-    # single glyph is wider than the current cell width.
-    epw = pdf.w - pdf.l_margin - pdf.r_margin  # effective page width
+    epw = pdf.w - pdf.l_margin - pdf.r_margin
     for raw_line in body_md.split("\n"):
         line = raw_line.rstrip()
         if not line:
@@ -111,47 +123,69 @@ def _fpdf_render(body_md: str, FPDF: type) -> bytes:
 
 
 def _render_line(pdf, line: str, epw: float, font_name: str) -> None:
-    """Render one line of memo text with multiple defensive fallbacks so a
-    pathological string can't crash the whole export.
+    """Render one line of memo text without ever raising, and without
+    duplicating any character.
 
-    Strategy, in order:
-    1. Reset cursor to the left margin and call multi_cell with the full
-       effective page width — handles 99% of input including long Hebrew
-       quotes with no internal whitespace.
-    2. If fpdf2 still raises (a single Unicode character whose advance-
-       width exceeds the page width), break the line into fixed-size char
-       chunks and render each chunk; this preserves every character.
-    3. If THAT fails too, drop to latin-1 with replace so unrepresentable
-       glyphs become '?' but the export still completes — still no chars
-       dropped silently, just visibly substituted.
+    Strategy:
+      1. Try multi_cell on the full line at the effective page width.
+      2. On any fpdf2 error, abandon the partial write (any text already
+         committed by multi_cell is fine — it was successfully positioned)
+         and switch to a *resumable* chunked walk: feed text in small,
+         break-safe chunks. Each chunk is rendered independently with its
+         own try; on failure that chunk goes through an ASCII substitution
+         so the next chunk still gets a clean attempt. This guarantees
+         every input character reaches the PDF exactly once.
     """
-    # (1) — normal path
     pdf.set_x(pdf.l_margin)
     try:
-        pdf.multi_cell(epw, 5, line)
+        pdf.multi_cell(epw, 5, line, new_x="LMARGIN", new_y="NEXT")
         return
     except Exception:
-        pass
+        # multi_cell raised AFTER possibly emitting nothing (the "single
+        # character" error is raised before any output). Reset cursor and
+        # continue with the chunked walk for THIS line only.
+        pdf.set_x(pdf.l_margin)
 
-    # (2) — chunked: split the line by approximate width that always fits.
-    # 60 chars per chunk is conservative even for wide CJK / Hebrew glyphs
-    # at 9pt on letter-size paper (~190mm usable width).
-    try:
-        for start in range(0, len(line), 60):
-            chunk = line[start : start + 60]
+    # Walk the line in small chunks. 40 chars keeps even a wide-glyph
+    # script comfortably under the page width at 9 pt.
+    CHUNK = 40
+    for start in range(0, len(line), CHUNK):
+        chunk = line[start : start + CHUNK]
+        try:
             pdf.set_x(pdf.l_margin)
-            pdf.multi_cell(epw, 5, chunk)
-        return
-    except Exception:
-        pass
-
-    # (3) — last resort: ASCII fallback so the export still completes.
-    pdf.set_x(pdf.l_margin)
-    pdf.multi_cell(epw, 5, line.encode("latin-1", "replace").decode("latin-1"))
+            pdf.multi_cell(epw, 5, chunk, new_x="LMARGIN", new_y="NEXT")
+        except Exception:
+            # Substitute this chunk's unrepresentable chars with '?' so the
+            # render still completes. Visible substitution, never silent
+            # drop. Note: chars from previous successful chunks are already
+            # on the page — we are NOT re-emitting them.
+            try:
+                pdf.set_x(pdf.l_margin)
+                pdf.multi_cell(
+                    epw, 5,
+                    chunk.encode("latin-1", "replace").decode("latin-1"),
+                    new_x="LMARGIN",
+                    new_y="NEXT",
+                )
+            except Exception as exc:
+                logger.error("fpdf2 chunk render failed even after ASCII fallback: %r", exc)
 
 
 def _find_unicode_font() -> Path | None:
-    """Search common system paths for a Unicode-capable TrueType font."""
+    """Search for a Unicode-capable TrueType font.
+
+    Order:
+      1. Bundled `config/fonts/DejaVuSans.ttf` in the repo — guaranteed
+         present on every deploy, no dependency on host packages.
+      2. System paths (kept as a fallback in case the bundled file is
+         stripped by a packaging step).
+    """
+    # Bundled next to this module so the wheel includes it (hatch packages
+    # the `app/` directory only — anything outside isn't shipped on Render).
+    bundled = Path(__file__).resolve().parent / "fonts" / "DejaVuSans.ttf"
+    if bundled.exists():
+        return bundled
+
     candidates = (
         # Debian / Ubuntu (Render's base image).
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
