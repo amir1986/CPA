@@ -32,7 +32,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import RequestPrincipal, current_principal_permissive as current_principal
+from app.api.auth import RequestPrincipal
+from app.api.auth import current_principal_permissive as current_principal
 from app.api.errors import ApiError
 from app.audit.workpapers.renderer import render_pdf_bytes, render_template
 from app.db.models.comparison_models import (
