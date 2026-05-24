@@ -466,7 +466,7 @@ async def export_memo(
             )
         except RuntimeError as exc:
             raise ApiError(status=503, code="pdf_unavailable", detail=str(exc)) from exc
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise ApiError(
                 status=504,
                 code="pdf_timeout",
