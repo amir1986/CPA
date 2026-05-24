@@ -18,20 +18,72 @@ branch_labels = None
 depends_on = None
 
 
-USER_ROLE = postgresql.ENUM("partner", "manager", "senior", "staff", "admin", name="user_role")
-ENG_TYPE = postgresql.ENUM("audit", "review", "compilation", "tax", "bookkeeping", name="engagement_type")
-ENG_STATUS = postgresql.ENUM("planning", "fieldwork", "review", "signed_off", "archived", name="engagement_status")
-FILE_KIND = postgresql.ENUM("trial_balance", "gl", "bank", "invoice", "financial_statements", "contract", "policy", "other", name="file_kind")
-PARSED_STATUS = postgresql.ENUM("queued", "extracting", "canonicalizing", "done", "failed", name="parsed_status")
-ACCOUNT_TYPE = postgresql.ENUM("asset", "liability", "equity", "revenue", "expense", name="account_type")
-RECON_KIND = postgresql.ENUM("bank", "intercompany", name="reconciliation_kind")
-TOKEN_KIND = postgresql.ENUM("verify_email", "password_reset", name="auth_token_kind")
+# create_type=False on the ENUM objects so SQLAlchemy will NOT try to
+# auto-CREATE TYPE when a table that references one of these is created.
+# We pre-create idempotently below via DO/EXCEPTION blocks instead.
+USER_ROLE = postgresql.ENUM("partner", "manager", "senior", "staff", "admin", name="user_role", create_type=False)
+ENG_TYPE = postgresql.ENUM("audit", "review", "compilation", "tax", "bookkeeping", name="engagement_type", create_type=False)
+ENG_STATUS = postgresql.ENUM("planning", "fieldwork", "review", "signed_off", "archived", name="engagement_status", create_type=False)
+FILE_KIND = postgresql.ENUM("trial_balance", "gl", "bank", "invoice", "financial_statements", "contract", "policy", "other", name="file_kind", create_type=False)
+PARSED_STATUS = postgresql.ENUM("queued", "extracting", "canonicalizing", "done", "failed", name="parsed_status", create_type=False)
+ACCOUNT_TYPE = postgresql.ENUM("asset", "liability", "equity", "revenue", "expense", name="account_type", create_type=False)
+RECON_KIND = postgresql.ENUM("bank", "intercompany", name="reconciliation_kind", create_type=False)
+TOKEN_KIND = postgresql.ENUM("verify_email", "password_reset", name="auth_token_kind", create_type=False)
+
+
+_ENUM_DEFS = [
+    ("user_role", ("partner", "manager", "senior", "staff", "admin")),
+    ("engagement_type", ("audit", "review", "compilation", "tax", "bookkeeping")),
+    ("engagement_status", ("planning", "fieldwork", "review", "signed_off", "archived")),
+    ("file_kind", ("trial_balance", "gl", "bank", "invoice", "financial_statements", "contract", "policy", "other")),
+    ("parsed_status", ("queued", "extracting", "canonicalizing", "done", "failed")),
+    ("account_type", ("asset", "liability", "equity", "revenue", "expense")),
+    ("reconciliation_kind", ("bank", "intercompany")),
+    ("auth_token_kind", ("verify_email", "password_reset")),
+]
+
+
+def _create_enum_idempotent(name: str, values: tuple[str, ...]) -> None:
+    """Postgres has no `CREATE TYPE IF NOT EXISTS`. Wrap in DO/EXCEPTION
+    so re-runs against a half-applied database succeed instead of crashing
+    on `duplicate_object`."""
+    values_sql = ", ".join(f"'{v}'" for v in values)
+    op.execute(f"""
+    DO $$ BEGIN
+        CREATE TYPE {name} AS ENUM ({values_sql});
+    EXCEPTION WHEN duplicate_object THEN null;
+    END $$;
+    """)
+
+
+_TABLES_REVERSE = [
+    "audit_log", "agent_runs", "query_log",
+    "audit_findings", "workpapers", "audit_programs",
+    "three_way_matches", "je_test_runs", "samples",
+    "reconciliations", "bank_statements",
+    "coa_mappings", "trial_balances", "gl_entries", "chart_of_accounts",
+    "files", "engagements", "clients",
+    "auth_tokens", "user_tweaks", "users", "firms",
+]
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    for enum in (USER_ROLE, ENG_TYPE, ENG_STATUS, FILE_KIND, PARSED_STATUS, ACCOUNT_TYPE, RECON_KIND, TOKEN_KIND):
-        enum.create(bind, checkfirst=True)
+    # Defensive reset: an earlier deploy crashed partway through this
+    # initial migration (after creating some tables/types but before
+    # completing), leaving the DB in a half-applied state that vanilla
+    # CREATE TABLE / CREATE TYPE can't reconcile. Drop everything CASCADE
+    # so the rest of upgrade() runs against a clean slate. Safe because
+    # this is the initial migration — no user data could exist yet that
+    # we wouldn't already be recreating.
+    op.execute(f"DROP TABLE IF EXISTS {', '.join(_TABLES_REVERSE)} CASCADE;")
+    op.execute(
+        "DROP TYPE IF EXISTS "
+        + ", ".join(name for name, _ in _ENUM_DEFS)
+        + " CASCADE;"
+    )
+
+    for name, values in _ENUM_DEFS:
+        _create_enum_idempotent(name, values)
 
     op.create_table(
         "firms",
