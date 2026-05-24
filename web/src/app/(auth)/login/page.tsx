@@ -69,13 +69,15 @@ async function skipAction() {
     loginStatus = `login_threw: ${(err as Error).message}`;
   }
 
-  // Now the real signIn.
-  const fd = new FormData();
-  fd.append("email", SKIP_EMAIL);
-  fd.append("password", SKIP_PASSWORD);
-
+  // Now the real signIn. In Auth.js v5, the SECOND arg holds both the
+  // credentials and `redirectTo` — the third positional is authorizationParams
+  // (OAuth only) and silently drops `redirectTo` for the credentials provider.
   try {
-    await signIn("credentials", fd, { redirectTo: "/engagements" });
+    await signIn("credentials", {
+      email: SKIP_EMAIL,
+      password: SKIP_PASSWORD,
+      redirectTo: "/engagements",
+    });
   } catch (err) {
     if ((err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT")) throw err;
     const msg = (err as Error).message ?? "unknown";
