@@ -460,9 +460,12 @@ async def export_memo(
         # Off-thread it + cap with asyncio.wait_for so a pathological
         # render can't pin the worker forever.
         try:
+            # No content cap — the full memo (every cite quote, every issue)
+            # goes into the PDF. Timeout is generous (5 minutes) so even a
+            # large multi-issue Hebrew export has room.
             pdf_bytes = await asyncio.wait_for(
                 asyncio.to_thread(render_pdf_bytes, full),
-                timeout=60.0,
+                timeout=300.0,
             )
         except RuntimeError as exc:
             raise ApiError(status=503, code="pdf_unavailable", detail=str(exc)) from exc
@@ -470,7 +473,7 @@ async def export_memo(
             raise ApiError(
                 status=504,
                 code="pdf_timeout",
-                detail="PDF rendering took longer than 60s — try the markdown export instead",
+                detail="PDF rendering took longer than 5 minutes — try the markdown export instead",
             ) from exc
         except Exception as exc:
             logger.exception("pdf render crashed for run %s", run_id)
@@ -506,7 +509,7 @@ def _format_citations(cites: list[dict]) -> str:
         if url:
             head += f" — {url}"
         if quote:
-            head += f"\n  > {quote[:300]}"
+            head += f"\n  > {quote}"
         lines.append(head)
     return "\n".join(lines)
 
@@ -520,6 +523,6 @@ def _format_user_cites(cites: list[dict]) -> str:
         quote = (c.get("quote") or "").strip()
         head = f"- _{anchor}_"
         if quote:
-            head += f": {quote[:300]}"
+            head += f": {quote}"
         lines.append(head)
     return "\n".join(lines)
