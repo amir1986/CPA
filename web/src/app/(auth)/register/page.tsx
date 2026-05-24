@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-const API_BASE = process.env.INTERNAL_API_BASE ?? "http://localhost:8000";
+const API_BASE = (process.env.INTERNAL_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
 
 async function registerAction(formData: FormData) {
   "use server";

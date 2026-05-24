@@ -30,7 +30,7 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE = process.env.INTERNAL_API_BASE ?? "http://localhost:8000";
+const API_BASE = (process.env.INTERNAL_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
 
 type FetchOpts = {
   method?: "GET" | "POST" | "PATCH" | "DELETE";

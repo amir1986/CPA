@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-const API_BASE = process.env.INTERNAL_API_BASE ?? "http://localhost:8000";
+const API_BASE = (process.env.INTERNAL_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
 
 // Hard-coded "guest" credentials used by the Skip button. The first
 // click registers this user (auto-creating a Demo Firm) if it doesn't

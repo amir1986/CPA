@@ -35,7 +35,7 @@ type AppJWT = {
   [key: string]: unknown;
 };
 
-const API_BASE = process.env.INTERNAL_API_BASE ?? "http://localhost:8000";
+const API_BASE = (process.env.INTERNAL_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
 
 async function backendLogin(email: string, password: string): Promise<LoginOut | null> {
   const res = await fetch(`${API_BASE}/auth/login`, {

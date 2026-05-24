@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/lib/auth";
 
-const API_BASE = process.env.INTERNAL_API_BASE ?? "http://localhost:8000";
+const API_BASE = (process.env.INTERNAL_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
 
 async function forward(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }): Promise<Response> {
   const session = await auth();
