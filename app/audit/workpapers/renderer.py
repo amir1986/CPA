@@ -107,7 +107,7 @@ def _fpdf_render(body_md: str, FPDF: type) -> bytes:
             # the whole export. Rare with DejaVu but defensive.
             pdf.multi_cell(0, 5, line.encode("latin-1", "ignore").decode("latin-1"))
     out = pdf.output()
-    return bytes(out) if not isinstance(out, (bytes, bytearray)) else bytes(out)
+    return bytes(out)
 
 
 def _find_unicode_font() -> Path | None:
