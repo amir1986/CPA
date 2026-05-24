@@ -453,10 +453,32 @@ async def export_memo(
 
     safe_name = f"usgaap-ifrs-comparison-{run.id}"
     if payload.format == "pdf":
+        # render_pdf_bytes is CPU-bound (fpdf2 walks every line, shapes
+        # glyphs, embeds a Unicode TTF). Running it inline blocks the
+        # event loop for the duration — long enough on a multi-issue
+        # Hebrew memo that Render's edge times out the request with 502.
+        # Off-thread it + cap with asyncio.wait_for so a pathological
+        # render can't pin the worker forever.
         try:
-            pdf_bytes = render_pdf_bytes(full)
+            pdf_bytes = await asyncio.wait_for(
+                asyncio.to_thread(render_pdf_bytes, full),
+                timeout=60.0,
+            )
         except RuntimeError as exc:
             raise ApiError(status=503, code="pdf_unavailable", detail=str(exc)) from exc
+        except asyncio.TimeoutError as exc:
+            raise ApiError(
+                status=504,
+                code="pdf_timeout",
+                detail="PDF rendering took longer than 60s — try the markdown export instead",
+            ) from exc
+        except Exception as exc:
+            logger.exception("pdf render crashed for run %s", run_id)
+            raise ApiError(
+                status=500,
+                code="pdf_render_failed",
+                detail=f"PDF render failed: {exc}",
+            ) from exc
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",
