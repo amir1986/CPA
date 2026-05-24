@@ -350,10 +350,18 @@ async def stream_run(
     await _load_run(run_id, principal, session)
 
     async def gen() -> AsyncIterator[bytes]:
+        # Preamble: 2 KB of SSE comment lines so Cloudflare / Render's
+        # edge layer flushes immediately instead of buffering the response
+        # until enough bytes accumulate. Without this, the browser sees
+        # zero events for ~30 s even though the api is emitting them.
+        yield (b": " + b"x" * 2048 + b"\n\n")
+
         factory = get_sessionmaker()
         last_status: str | None = None
-        # ≤ 5 minutes; polls every 1s.
-        for _ in range(300):
+        last_heartbeat = 0
+        # ≤ 5 minutes; polls every 1 s, heartbeats every 5 s so the
+        # connection stays unbuffered and idle proxies don't drop it.
+        for tick in range(300):
             async with factory() as s2:
                 row = await s2.get(ComparisonRun, run_id)
                 if row is None:
@@ -372,12 +380,24 @@ async def stream_run(
                 if cur in {"done", "failed"}:
                     yield b"event: done\ndata: {}\n\n"
                     return
+            # Heartbeat keeps the connection alive and forces a flush even
+            # when no status change happened.
+            if tick - last_heartbeat >= 5:
+                yield b": heartbeat\n\n"
+                last_heartbeat = tick
             await asyncio.sleep(1)
 
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            # `no-transform` keeps Cloudflare from gzip-buffering the stream;
+            # `identity` content-encoding belt-and-suspenders for the same
+            # concern. `X-Accel-Buffering: no` covers nginx.
+            "Cache-Control": "no-cache, no-transform",
+            "Content-Encoding": "identity",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
