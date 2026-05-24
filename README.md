@@ -45,7 +45,7 @@ It (1) knows the standards with strict citations (US GAAP, IFRS, Israeli GAAP, A
 | Layer | What we use |
 | --- | --- |
 | **Backend** | Python 3.12, FastAPI, SQLAlchemy 2 (async) + Alembic, Postgres 16, Qdrant (hybrid dense + BM25), LlamaIndex (RAG + FunctionAgent), Ollama Cloud LLM with circular `KeyRotator`, `intfloat/multilingual-e5-large` embeddings (CPU, in-process), aioboto3 → S3/MinIO, pdfplumber / pytesseract (EN+HE) / camelot / openpyxl + pandas for extraction, WeasyPrint for workpaper PDFs, slowapi rate limits, structlog + OpenTelemetry + Prometheus |
-| **Frontend** | Next.js 15 (App Router, RSC, standalone Node), React 19, TypeScript 5, Tailwind 4 + shadcn/ui, Auth.js (Credentials), TanStack Query, Tremor + Recharts, Cytoscape.js (knowledge graph), `react-pdf` + `tus-js-client` (document analyzer), next-intl (EN/HE) + next-themes, Zustand (narrow local UI), nuqs (URL state), Shiki (code highlight), cmdk (command palette) |
+| **Frontend** | Next.js 15 (App Router, RSC, standalone Node), React 19, TypeScript 5, Tailwind 4 + shadcn/ui, Auth.js (Credentials), TanStack Query, Tremor + Recharts, Cytoscape.js (knowledge graph), `react-pdf` + `tus-js-client` (document analyzer), next-intl (EN/HE) + next-themes, Zustand (narrow local UI), nuqs (URL state), Shiki (code highlight), cmdk (command palette). Screens: Chat, Documents, Books, Analysis, Audit, Compare (topic-based GAAP↔IFRS), **USGAAP <> IFRS** (upload-driven framework translation), Traces, Sources, Admin, Settings, Tweaks |
 | **Auth & sessions** | Auth.js cookie session bridging to a FastAPI-issued JWT (HS256, sliding TTL + refresh), bcrypt password hashing, email verify/reset via aiosmtplib (MailHog in dev) |
 | **Build & tooling** | pnpm (web), uv (api), Make (single entrypoint), pre-commit, ESLint + Prettier, Ruff + mypy, vitest + React Testing Library, Playwright + `@axe-core/playwright`, schemathesis, testcontainers, openapi-typescript for type generation |
 | **Ops** | Docker Compose (api + web + Caddy + postgres + qdrant + minio + mailhog) for local dev; single Helm chart with two Deployments (api + web) behind one Ingress; ServiceMonitor + HPA + NetworkPolicy; kind for smoke installs; cloud-agnostic (EKS/GKE/AKS) |
@@ -122,6 +122,7 @@ make nuke                                   # drop all volumes and re-seed from 
 | Upload and parse a TB | `/engagements/{eid}/documents` | Drag-drop, live parse status, parsed grid preview |
 | Draw an audit sample | `/engagements/{eid}/audit/samples` | Sample IDs + reproducible seed printed |
 | Generate a workpaper | `/engagements/{eid}/audit/workpapers` | Markdown + PDF download |
+| Convert a policy between US GAAP and IFRS | `/usgaap-ifrs` | Drop one or more PDF / DOCX / XLSX / CSV files; the model detects the source framework (you can override), identifies the accounting issues inside, renders a per-issue side-by-side with citation chips, and exports a workpaper-style memo |
 | Switch to Hebrew | Topbar language toggle | UI flips to RTL, HE prompts active |
 
 ## Running tests
@@ -148,7 +149,13 @@ make e2e                   # full-stack: compose up → migrate → ingest fixtu
 
 ```
 app/         # FastAPI backend (Python 3.12)
+  api/routes/comparisons.py        # USGAAP <> IFRS REST + SSE surface
+  services/comparison_orchestrator.py
+  services/comparisons_engagement.py
+  ingest_docs/extractors/          # pdf_text, docx, csv_, excel_narrative (+ excel TB/GL)
 web/         # Next.js 15 frontend (TypeScript)
+  src/app/(app)/usgaap-ifrs/       # top-level "USGAAP <> IFRS" tool
+  src/components/comparison/       # UploadDropzone, FrameworkConfirm, IssueCard, CiteChip, ExportMemoButton, RunStatusPill
 charts/      # Helm chart (single chart, two Deployments)
 config/      # standards sources, prompts, COA templates, workpaper templates
 tests/       # unit + integration + contract + e2e (backend)

@@ -203,3 +203,47 @@ export type Tweaks = {
   ratio_overrides: Record<string, unknown> | null;
   sampling_overrides: Record<string, unknown> | null;
 };
+
+export type ComparisonRunSummary = {
+  id: string;
+  status: string;
+  detected_framework: "US" | "IFRS" | null;
+  override_framework: "US" | "IFRS" | null;
+  issue_count: number;
+  file_names: string[];
+  created_at: string;
+};
+
+export type ComparisonUserCite = {
+  ref: string;
+  anchor: string;
+  quote: string;
+};
+
+export type ComparisonIssue = {
+  id: string;
+  seq: number;
+  topic: string;
+  current_summary: string;
+  current_user_cites: ComparisonUserCite[];
+  gaap_summary: string | null;
+  gaap_citations: Citation[];
+  ifrs_summary: string | null;
+  ifrs_citations: Citation[];
+  differences: string | null;
+  conversion_impact: string | null;
+};
+
+export type ComparisonRunDetail = {
+  id: string;
+  status: string;
+  detected_framework: "US" | "IFRS" | null;
+  override_framework: "US" | "IFRS" | null;
+  confidence: number | null;
+  rationale: string | null;
+  error: string | null;
+  file_ids: string[];
+  file_names: string[];
+  issues: ComparisonIssue[];
+  created_at: string;
+};

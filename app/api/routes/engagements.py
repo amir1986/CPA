@@ -52,12 +52,14 @@ async def list_engagements(
     principal: RequestPrincipal = Depends(current_principal),
     session: AsyncSession = Depends(get_session),
 ) -> list[EngagementOut]:
-    # Join through clients to filter by firm.
+    # Join through clients to filter by firm. The hidden per-user "comparisons"
+    # engagement that backs the USGAAP <> IFRS tool must never surface here.
     rows = (
         await session.scalars(
             select(Engagement)
             .join(Client, Client.id == Engagement.client_id)
             .where(Client.firm_id == principal.firm_id)
+            .where(Engagement.type != EngagementType.comparisons)
             .order_by(Engagement.created_at.desc())
         )
     ).all()

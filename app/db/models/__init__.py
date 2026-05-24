@@ -28,6 +28,12 @@ from app.db.models.books import (  # noqa: F401
     GLEntry,
     TrialBalance,
 )
+from app.db.models.comparison_models import (  # noqa: F401
+    ComparisonIssue,
+    ComparisonRun,
+    ComparisonStatus,
+    Framework,
+)
 from app.db.models.engagement import (  # noqa: F401
     Client,
     Engagement,

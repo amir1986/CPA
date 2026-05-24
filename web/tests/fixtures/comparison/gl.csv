@@ -1,0 +1,6 @@
+je_number,je_date,account_code,description,debit,credit
+JE-001,2024-01-15,4100,Revenue recognized when control transfers (ASC 606),0,150000
+JE-002,2024-01-15,1200,Accounts receivable for sale of goods,150000,0
+JE-003,2024-02-01,1700,Right-of-use asset capitalized (ASC 842),120000,0
+JE-004,2024-02-01,2300,Lease liability recognized,0,120000
+JE-005,2024-03-31,5100,COGS recognized on transfer of control,90000,0

@@ -18,6 +18,7 @@ from app.api.routes import (
     auth,
     clients,
     coa,
+    comparisons,
     engagements,
     files,
     gl,
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(agent_route.router)
     app.include_router(knowledge.router)
+    app.include_router(comparisons.router)
 
     return app
 

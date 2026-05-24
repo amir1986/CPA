@@ -20,6 +20,9 @@ class EngagementType(str, enum.Enum):
     compilation = "compilation"
     tax = "tax"
     bookkeeping = "bookkeeping"
+    # Hidden per-user engagement that backs the top-level USGAAP <> IFRS tool.
+    # Filtered out of every UI list and every cross-engagement aggregation.
+    comparisons = "comparisons"
 
 
 class EngagementStatus(str, enum.Enum):

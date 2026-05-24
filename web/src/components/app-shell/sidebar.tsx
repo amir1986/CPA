@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import {
+  ArrowLeftRight,
   BarChart3,
   BookOpen,
   ClipboardCheck,
@@ -40,6 +41,7 @@ function buildItems(eid: string | undefined): { primary: Item[]; secondary: Item
         : []),
     ],
     secondary: [
+      { href: "/usgaap-ifrs", label: "USGAAP <> IFRS", icon: ArrowLeftRight },
       { href: "/sources", label: "Sources", icon: Network },
       { href: "/admin", label: "Admin", icon: Shield },
       { href: "/settings/profile", label: "Settings", icon: Settings },
