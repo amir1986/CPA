@@ -324,18 +324,80 @@ async def _run_one_agent(topic: str, current_summary: str, jurisdiction: str) ->
     return _hydrate_query_answer(result)
 
 
+# Plain-prose summarization when the standards corpus is empty (e.g. the
+# free-tier deploy hasn't ingested any sources yet). The agent's normal
+# kb_search path always refuses without a corpus, leaving the comparison
+# panes empty — the user sees detection + issue identification but no
+# US vs IFRS treatment. This fallback uses the model's general knowledge
+# to produce a short, marked summary so the side-by-side card is useful.
+_SYNTH_PROMPT = """You are a CPA. Summarize how {framework} treats the following accounting topic in 3-5 sentences. Be specific about the controlling standard family (e.g. ASC 606 for US revenue, IFRS 15 for IFRS revenue), the recognition / measurement criteria, and any disclosure highlights.
+
+Topic: {topic}
+
+Context (taxpayer's current policy excerpt):
+{current_summary}
+
+Respond with prose only. Do NOT wrap in JSON. Do NOT include citations — your answer will be labeled as model-knowledge synthesis."""
+
+
+async def _synthesize_treatment(
+    topic: str,
+    current_summary: str,
+    jurisdiction: str,
+    llm: LLMClient,
+) -> str:
+    """Direct LLM call producing a citation-free, marked summary."""
+    framework_name = "US GAAP (FASB ASC)" if jurisdiction == "US" else "IFRS / IAS"
+    prompt = _SYNTH_PROMPT.format(
+        framework=framework_name,
+        topic=topic,
+        current_summary=current_summary[:600],
+    )
+    try:
+        response = await asyncio.wait_for(llm.complete(prompt), timeout=60.0)
+    except Exception as exc:
+        logger.warning("synthesis fallback failed for %s/%s: %s", topic, jurisdiction, exc)
+        return ""
+    text = (response.text or "").strip()
+    if not text:
+        return ""
+    # Mark the synthesis so the frontend can render a "no citations" badge.
+    return f"[synthesized from model knowledge — no standards retrieved]\n\n{text}"
+
+
+async def _one_side(topic: str, current_summary: str, jurisdiction: str) -> QueryAnswer:
+    """Agent first, then synthesis fallback on refusal."""
+    primary = await _run_one_agent(topic, current_summary, jurisdiction)
+    if not primary.refused and primary.answer.strip():
+        return primary
+    # Corpus empty / agent gave up → fall back to direct LLM synthesis.
+    text = await _synthesize_treatment(topic, current_summary, jurisdiction, get_llm())
+    if not text:
+        return primary  # nothing better to offer
+    return QueryAnswer(
+        answer=text,
+        citations=[],
+        refused=False,    # we DO have content, just no cites
+        language="en",
+        retrieved=[],
+    )
+
+
 async def _compare_one(topic: str, current_summary: str) -> tuple[QueryAnswer, QueryAnswer]:
-    """Drive both jurisdictions in parallel via the agent loop.
+    """Drive both jurisdictions in parallel via the agent loop, falling back
+    to a direct LLM synthesis when the corpus is empty.
 
     Each side runs the same tool-calling agent with a single tool
     (``kb_search``) scoped to its framework. The agent picks how many
     queries to issue (capped at ``_AGENT_MAX_STEPS``) and returns a final
-    cited summary.
+    cited summary. If both kb_search calls return refusal (typical on
+    deploys without an ingested standards corpus), we fall back to an
+    explicitly-marked LLM synthesis so the comparison panes are populated.
     """
     return await asyncio.wait_for(
         asyncio.gather(
-            _run_one_agent(topic, current_summary, "US"),
-            _run_one_agent(topic, current_summary, "IFRS"),
+            _one_side(topic, current_summary, "US"),
+            _one_side(topic, current_summary, "IFRS"),
         ),
         timeout=_COMPARE_TIMEOUT_S,
     )
