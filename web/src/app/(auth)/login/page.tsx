@@ -34,8 +34,9 @@ async function loginAction(formData: FormData) {
 async function skipAction() {
   "use server";
   // Idempotent register: 409 (email_taken) is the expected steady-state response.
+  let registerStatus = "skipped";
   try {
-    await fetch(`${API_BASE}/auth/register`, {
+    const r = await fetch(`${API_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -46,14 +47,29 @@ async function skipAction() {
       }),
       cache: "no-store",
     });
+    registerStatus = `register=${r.status}`;
   } catch (err) {
     const detail = `api_unreachable: ${(err as Error).message} (tried ${API_BASE})`;
     redirect(`/login?error=${encodeURIComponent(detail)}`);
   }
 
-  // Sign in using the FormData + separate-options pattern. The plain-object
-  // form of signIn() seemed to trip CredentialsSignin under Auth.js v5 +
-  // Next 15 from Server Actions; this matches the docs example exactly.
+  // Diagnostic: do the EXACT login call Auth.js's backendLogin does, from
+  // the same Server Action context. If this 200s but signIn() still throws
+  // CredentialsSignin, the issue is inside Auth.js's machinery, not the api.
+  let loginStatus = "?";
+  try {
+    const r = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: SKIP_EMAIL, password: SKIP_PASSWORD }),
+      cache: "no-store",
+    });
+    loginStatus = `login=${r.status}`;
+  } catch (err) {
+    loginStatus = `login_threw: ${(err as Error).message}`;
+  }
+
+  // Now the real signIn.
   const fd = new FormData();
   fd.append("email", SKIP_EMAIL);
   fd.append("password", SKIP_PASSWORD);
@@ -63,7 +79,11 @@ async function skipAction() {
   } catch (err) {
     if ((err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT")) throw err;
     const msg = (err as Error).message ?? "unknown";
-    redirect(`/login?error=${encodeURIComponent(`skip_failed: ${msg}`)}`);
+    redirect(
+      `/login?error=${encodeURIComponent(
+        `skip_failed [${registerStatus}, ${loginStatus}, api_base=${API_BASE}]: ${msg}`,
+      )}`,
+    );
   }
 }
 
