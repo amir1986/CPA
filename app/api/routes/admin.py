@@ -2,18 +2,48 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import RequestPrincipal, require_admin
+from app.api.errors import ApiError
+from app.config import get_settings
 from app.db.models.observability import AuditLog
 from app.db.session import get_session
 from app.llm.client import OllamaCloudLLM, get_llm
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.post("/migrate", include_in_schema=False)
+async def trigger_migrate(
+    x_admin_key: str = Header(default="", alias="X-Admin-Key"),
+) -> dict[str, Any]:
+    """Run `alembic upgrade head` from within the running container.
+
+    Workaround for the case where the startCommand's alembic step failed
+    silently and uvicorn started against an empty schema. Admin-key-gated.
+    """
+    settings = get_settings()
+    if x_admin_key != settings.admin_api_key.get_secret_value():
+        raise ApiError(status=403, code="forbidden", detail="invalid admin key")
+
+    result = subprocess.run(
+        ["alembic", "upgrade", "head"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return {
+        "ok": result.returncode == 0,
+        "exit_code": result.returncode,
+        "stdout": result.stdout[-2000:],
+        "stderr": result.stderr[-2000:],
+    }
 
 
 @router.get("/rotator", response_model=dict)

@@ -17,7 +17,10 @@ services:
     env: python
     plan: free
     buildCommand: pip install --upgrade pip && pip install .
-    startCommand: bash -c "alembic upgrade head; exec uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    # `&&` instead of `;` — if alembic fails, the deploy fails LOUDLY
+    # instead of starting uvicorn against an empty schema. set -e is
+    # belt-and-suspenders inside bash -c.
+    startCommand: bash -c "set -e && alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: /healthz
     envVars:
       - key: DATABASE_URL
