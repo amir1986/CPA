@@ -93,21 +93,61 @@ def _fpdf_render(body_md: str, FPDF: type) -> bytes:
         except Exception:
             pass
 
-    pdf.set_font(font_name, size=10)
-    # Render line-by-line. multi_cell handles wrapping at the right margin.
+    pdf.set_font(font_name, size=9)
+    # Render line-by-line; reset cursor + use explicit page width so fpdf2
+    # never raises "Not enough horizontal space" — that error fires when
+    # multi_cell(w=0, ...) sees a non-positive remaining width because a
+    # previous call left the cursor at or past the right margin, or when a
+    # single glyph is wider than the current cell width.
+    epw = pdf.w - pdf.l_margin - pdf.r_margin  # effective page width
     for raw_line in body_md.split("\n"):
         line = raw_line.rstrip()
         if not line:
             pdf.ln(4)
             continue
-        try:
-            pdf.multi_cell(0, 5, line)
-        except Exception:
-            # Drop any character the font can't represent rather than crash
-            # the whole export. Rare with DejaVu but defensive.
-            pdf.multi_cell(0, 5, line.encode("latin-1", "ignore").decode("latin-1"))
+        _render_line(pdf, line, epw, font_name)
     out = pdf.output()
     return bytes(out)
+
+
+def _render_line(pdf, line: str, epw: float, font_name: str) -> None:
+    """Render one line of memo text with multiple defensive fallbacks so a
+    pathological string can't crash the whole export.
+
+    Strategy, in order:
+    1. Reset cursor to the left margin and call multi_cell with the full
+       effective page width — handles 99% of input including long Hebrew
+       quotes with no internal whitespace.
+    2. If fpdf2 still raises (a single Unicode character whose advance-
+       width exceeds the page width), break the line into fixed-size char
+       chunks and render each chunk; this preserves every character.
+    3. If THAT fails too, drop to latin-1 with replace so unrepresentable
+       glyphs become '?' but the export still completes — still no chars
+       dropped silently, just visibly substituted.
+    """
+    # (1) — normal path
+    pdf.set_x(pdf.l_margin)
+    try:
+        pdf.multi_cell(epw, 5, line)
+        return
+    except Exception:
+        pass
+
+    # (2) — chunked: split the line by approximate width that always fits.
+    # 60 chars per chunk is conservative even for wide CJK / Hebrew glyphs
+    # at 9pt on letter-size paper (~190mm usable width).
+    try:
+        for start in range(0, len(line), 60):
+            chunk = line[start : start + 60]
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(epw, 5, chunk)
+        return
+    except Exception:
+        pass
+
+    # (3) — last resort: ASCII fallback so the export still completes.
+    pdf.set_x(pdf.l_margin)
+    pdf.multi_cell(epw, 5, line.encode("latin-1", "replace").decode("latin-1"))
 
 
 def _find_unicode_font() -> Path | None:
