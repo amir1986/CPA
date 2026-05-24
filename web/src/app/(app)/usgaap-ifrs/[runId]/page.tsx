@@ -20,7 +20,24 @@ export default async function RunDetail({ params }: Props) {
     run = await apiFetch<ComparisonRunDetail>(`/comparison/runs/${runId}`);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) notFound();
-    throw err;
+    // Render an inline failure card instead of throwing into Next's opaque
+    // generic SSR error page. The user gets the actual reason; the run id
+    // stays in the URL so a retry just reloads.
+    const message =
+      err instanceof ApiError
+        ? `${err.code ?? "api_error"} (${err.status}): ${err.problem.detail || err.message}`
+        : (err as Error).message || String(err);
+    return (
+      <div className="mx-auto max-w-3xl space-y-4" data-testid="run-detail-error">
+        <Link href="/usgaap-ifrs" className="text-sm text-fg-muted hover:underline">
+          ← All runs
+        </Link>
+        <div className="rounded-md border border-danger bg-danger/5 p-4 text-sm text-danger">
+          <p className="font-medium">Could not load run {runId}</p>
+          <p className="mt-2 whitespace-pre-wrap">{message}</p>
+        </div>
+      </div>
+    );
   }
 
   const effective: "US" | "IFRS" = (run.override_framework ?? run.detected_framework ?? "US") as
