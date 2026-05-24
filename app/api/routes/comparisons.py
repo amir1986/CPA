@@ -396,7 +396,7 @@ async def export_memo(
         raise ApiError(status=400, code="empty", detail="run produced no issues to export")
 
     generated_at = datetime.now(tz=UTC).isoformat(timespec="seconds")
-    framework = (run.override_framework or run.detected_framework or Framework.us_gaap).value
+    framework = (run.override_framework or run.detected_framework or Framework.US).value
     sections: list[str] = []
     sections.append(f"# USGAAP <> IFRS comparison\n\n**Detected framework:** {framework}\n")
     if run.confidence is not None:

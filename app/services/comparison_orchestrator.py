@@ -139,6 +139,13 @@ Rules:
 """
 
 
+# Cap the detect-and-identify LLM call so a slow Ollama Cloud free-tier
+# response doesn't pin runs in "detecting" forever. Two minutes is generous
+# vs the typical 10-30 s response, and stays under typical client read
+# timeouts on Render.
+_DETECT_TIMEOUT_S = 120.0
+
+
 async def _detect_and_identify(
     text: str,
     *,
@@ -146,7 +153,7 @@ async def _detect_and_identify(
     llm: LLMClient,
 ) -> dict[str, Any]:
     prompt = _DETECT_PROMPT.format(corpus=text)
-    response = await llm.complete(prompt)
+    response = await asyncio.wait_for(llm.complete(prompt), timeout=_DETECT_TIMEOUT_S)
     parsed = _parse_json(response.text)
     # Drop fabricated source_chunk_refs.
     issues = parsed.get("issues") or []
@@ -192,6 +199,12 @@ def _citation_dicts(citations: list) -> list[dict]:
     ]
 
 
+# Per-issue retrieval also gets a guard against runaway LLM calls. Both
+# fan-outs share this budget; on timeout we return None/None and the
+# orchestrator persists the issue with empty standards-side summaries.
+_COMPARE_TIMEOUT_S = 120.0
+
+
 async def _compare_one(topic: str, current_summary: str) -> tuple[Any, Any]:
     """Fan out both jurisdictions in parallel using the existing RAG engine."""
     question = (
@@ -199,9 +212,12 @@ async def _compare_one(topic: str, current_summary: str) -> tuple[Any, Any]:
         f"The taxpayer's current policy states: {current_summary[:600]}. "
         f"Quote the controlling standard and identify the recognition / measurement rules."
     )
-    return await asyncio.gather(
-        answer_question(question, jurisdictions=["US"], corpus_types=["accounting"]),
-        answer_question(question, jurisdictions=["IFRS"], corpus_types=["accounting"]),
+    return await asyncio.wait_for(
+        asyncio.gather(
+            answer_question(question, jurisdictions=["US"], corpus_types=["accounting"]),
+            answer_question(question, jurisdictions=["IFRS"], corpus_types=["accounting"]),
+        ),
+        timeout=_COMPARE_TIMEOUT_S,
     )
 
 

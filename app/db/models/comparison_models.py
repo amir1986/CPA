@@ -27,8 +27,11 @@ class ComparisonStatus(str, enum.Enum):
 
 
 class Framework(str, enum.Enum):
-    us_gaap = "US"
-    ifrs = "IFRS"
+    # Member names must match values — SQLAlchemy's default Enum column writes
+    # the member name to the Postgres enum, and the underlying type only
+    # accepts "US" or "IFRS".
+    US = "US"
+    IFRS = "IFRS"
 
 
 class ComparisonRun(Base, TimestampMixin):
