@@ -6,6 +6,7 @@ import enum
 import uuid
 from datetime import datetime
 
+from sqlalchemy import DateTime
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -47,13 +48,13 @@ class User(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("firms.id", ondelete="CASCADE"), nullable=False, index=True
     )
     email: Mapped[str] = mapped_column(String(320), nullable=False)
-    email_verified_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(SAEnum(UserRole, name="user_role"), default=UserRole.staff, nullable=False)
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     locale: Mapped[str] = mapped_column(String(8), default="en", nullable=False)
     api_key_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    last_login_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     firm: Mapped[Firm] = relationship(back_populates="users")
     tweaks: Mapped[UserTweaks | None] = relationship(back_populates="user", uselist=False)
@@ -85,6 +86,6 @@ class AuthToken(Base):
     )
     kind: Mapped[AuthTokenKind] = mapped_column(SAEnum(AuthTokenKind, name="auth_token_kind"), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    expires_at: Mapped[datetime] = mapped_column(nullable=False)
-    used_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import MetaData
+from sqlalchemy import DateTime, MetaData
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.orm.decl_api import Mapped
 
@@ -37,5 +37,12 @@ class Base(DeclarativeBase):
 
 
 class TimestampMixin:
-    created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow, nullable=False)
+    # Use TIMESTAMPTZ explicitly so the ORM's bind type matches the migration's
+    # column type — `Mapped[datetime]` alone defaults to tz-naive DateTime() which
+    # asyncpg then refuses to populate with tz-aware utcnow() values.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False,
+    )

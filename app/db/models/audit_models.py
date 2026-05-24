@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Numeric, String
+from sqlalchemy import DateTime, ForeignKey, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,7 +25,7 @@ class Sample(Base, TimestampMixin):
     sample_ids: Mapped[list] = mapped_column(JSONB, nullable=False)
     seed: Mapped[int] = mapped_column(nullable=False)
     performance_materiality: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
-    drawn_at: Mapped[datetime] = mapped_column(nullable=False)
+    drawn_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class JETestRun(Base, TimestampMixin):
@@ -39,7 +39,7 @@ class JETestRun(Base, TimestampMixin):
     filters: Mapped[dict] = mapped_column(JSONB, nullable=False)
     hits_count: Mapped[int] = mapped_column(nullable=False, default=0)
     hits: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    ran_at: Mapped[datetime] = mapped_column(nullable=False)
+    ran_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ran_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 
@@ -52,7 +52,7 @@ class ThreeWayMatch(Base, TimestampMixin):
     )
     results_summary: Mapped[dict] = mapped_column(JSONB, nullable=False)
     exceptions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    ran_at: Mapped[datetime] = mapped_column(nullable=False)
+    ran_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class AuditProgram(Base, TimestampMixin):

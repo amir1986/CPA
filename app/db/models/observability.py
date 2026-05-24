@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,7 +25,7 @@ class QueryLog(Base):
     citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     refused: Mapped[bool] = mapped_column(default=False, nullable=False)
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class AgentRun(Base):
@@ -41,7 +41,7 @@ class AgentRun(Base):
     tool_calls: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     final_answer: Mapped[str | None] = mapped_column(nullable=True)
     citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class AuditLog(Base):
@@ -54,4 +54,4 @@ class AuditLog(Base):
     target_kind: Mapped[str | None] = mapped_column(String(48), nullable=True)
     target_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
