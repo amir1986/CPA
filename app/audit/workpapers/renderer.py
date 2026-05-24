@@ -12,6 +12,7 @@ can't be mistaken for signed-off work product.
 from __future__ import annotations
 
 import logging
+import re
 import string
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,20 +89,21 @@ def _fpdf_render(body_md: str, FPDF: type) -> bytes:
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Load a Unicode-capable TTF. Bundled DejaVu Sans is the FIRST choice so
-    # font loading doesn't depend on the host having /usr/share/fonts; system
-    # fallbacks come after. add_font failure is logged (not silenced) so we
-    # know if Hebrew/CJK glyphs are going to render as boxes.
+    # Load a Unicode-capable TTF (bundled DejaVu Sans first, then system
+    # fallbacks). For real Hebrew/CJK rendering both Regular and Bold faces
+    # are registered under the same family name so `set_font(uni, 'B')`
+    # works for headings + inline **bold**.
     font_name = "Helvetica"
     font_path = _find_unicode_font()
+    bold_path = _find_unicode_font(bold=True)
     if font_path is not None:
         try:
-            try:
-                pdf.add_font("uni", "", str(font_path), uni=True)
-            except TypeError:
-                # fpdf2 >= 2.8 dropped the `uni` kwarg; the new signature
-                # accepts the TTF directly.
-                pdf.add_font("uni", "", str(font_path))
+            _add_font(pdf, "uni", "", font_path)
+            if bold_path is not None:
+                try:
+                    _add_font(pdf, "uni", "B", bold_path)
+                except Exception as exc:
+                    logger.warning("bold TTF load failed: %r — bold will simulate", exc)
             font_name = "uni"
         except Exception as exc:
             logger.warning(
@@ -110,97 +112,174 @@ def _fpdf_render(body_md: str, FPDF: type) -> bytes:
                 font_path, exc,
             )
 
-    pdf.set_font(font_name, size=9)
+    pdf.set_font(font_name, size=10)
     epw = pdf.w - pdf.l_margin - pdf.r_margin
     for raw_line in body_md.split("\n"):
         line = raw_line.rstrip()
         if not line:
-            pdf.ln(4)
+            pdf.ln(3)
             continue
-        _render_line(pdf, line, epw, font_name)
+        _render_md_line(pdf, line, epw, font_name)
     out = pdf.output()
     return bytes(out)
 
 
-def _render_line(pdf, line: str, epw: float, font_name: str) -> None:
-    """Render one line of memo text without ever raising, and without
-    duplicating any character.
+def _add_font(pdf, family: str, style: str, path: Path) -> None:
+    """Register a TTF under the given family/style, tolerant of fpdf2 version
+    differences (the legacy `uni=True` kwarg was dropped in fpdf2 >= 2.8)."""
+    try:
+        pdf.add_font(family, style, str(path), uni=True)
+    except TypeError:
+        pdf.add_font(family, style, str(path))
 
-    Strategy:
-      1. Try multi_cell on the full line at the effective page width.
-      2. On any fpdf2 error, abandon the partial write (any text already
-         committed by multi_cell is fine — it was successfully positioned)
-         and switch to a *resumable* chunked walk: feed text in small,
-         break-safe chunks. Each chunk is rendered independently with its
-         own try; on failure that chunk goes through an ASCII substitution
-         so the next chunk still gets a clean attempt. This guarantees
-         every input character reaches the PDF exactly once.
+
+# Any character in these Unicode ranges flips the line to RTL rendering.
+# We use the bidi algorithm for visual reordering when present.
+_HEBREW_RE = re.compile(r"[֐-׿יִ-ﭏ؀-ۿݐ-ݿ]")
+
+
+def _is_rtl_line(line: str) -> bool:
+    return bool(_HEBREW_RE.search(line))
+
+
+def _to_display(line: str) -> str:
+    """Apply the bidi algorithm so a Hebrew logical-order string ('שלום') is
+    re-ordered into visual order for left-to-right glyph emission, which is
+    what PDF text drawing actually does. Falls back to the original string
+    if python-bidi isn't installed."""
+    try:
+        from bidi.algorithm import get_display  # type: ignore[import-untyped]
+        return get_display(line)
+    except ImportError:
+        return line
+    except Exception as exc:
+        logger.warning("bidi.get_display failed: %r — rendering logical-order", exc)
+        return line
+
+
+def _render_md_line(pdf, line: str, epw: float, font_name: str) -> None:
+    """Render one markdown-aware line.
+
+    Recognized markdown:
+      - '# / ## / ###' headings → larger font + bold
+      - '> ' blockquote → italic, indented
+      - '**text**' inline bold → fpdf2's markdown=True
+      - '_text_' inline italic → fpdf2's markdown=True
+      - '---' rule → horizontal line
+      - bullets ('- ', '* ') stay as-is (markdown=True handles them poorly).
+
+    Hebrew/RTL lines are bidi-reordered and right-aligned.
+    """
+    rtl = _is_rtl_line(line)
+    align = "R" if rtl else "L"
+
+    # Horizontal rule
+    if line.strip() in ("---", "***", "___"):
+        pdf.set_x(pdf.l_margin)
+        y = pdf.get_y() + 1
+        pdf.line(pdf.l_margin, y, pdf.l_margin + epw, y)
+        pdf.ln(3)
+        return
+
+    # Headings — set size + bold, then revert
+    head_match = re.match(r"^(#{1,6})\s+(.*)$", line)
+    if head_match:
+        depth = len(head_match.group(1))
+        text = head_match.group(2).strip()
+        # Sizes: # 16, ## 13, ### 11, #### 10
+        sizes = {1: 16, 2: 13, 3: 11}
+        size = sizes.get(depth, 10)
+        original_size = pdf.font_size_pt
+        pdf.set_font(font_name, style="B", size=size)
+        _emit(pdf, _to_display(text) if rtl else text, epw, align=align, markdown=False)
+        pdf.set_font(font_name, style="", size=original_size)
+        pdf.ln(1)
+        return
+
+    # Blockquote
+    if line.startswith("> "):
+        text = line[2:]
+        pdf.set_font(font_name, style="I", size=pdf.font_size_pt)
+        _emit(pdf, _to_display(text) if rtl else text, epw, align=align, markdown=True)
+        pdf.set_font(font_name, style="", size=pdf.font_size_pt)
+        return
+
+    # Default body line. markdown=True parses **bold** + __italic__ inline,
+    # but it doesn't play nice with Hebrew/bidi'd text — skip it for RTL.
+    text = _to_display(line) if rtl else line
+    _emit(pdf, text, epw, align=align, markdown=not rtl)
+
+
+def _emit(pdf, text: str, epw: float, *, align: str, markdown: bool) -> None:
+    """multi_cell wrapper with the same resumable-chunk safety net as the
+    earlier version: no character is ever dropped silently or duplicated.
+
+    Hebrew/RTL lines pass align='R' so the visually-reordered glyphs land
+    on the right side of the page, matching reader expectation.
     """
     pdf.set_x(pdf.l_margin)
     try:
-        pdf.multi_cell(epw, 5, line, new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(epw, 5, text, align=align, markdown=markdown,
+                       new_x="LMARGIN", new_y="NEXT")
         return
     except Exception:
-        # multi_cell raised AFTER possibly emitting nothing (the "single
-        # character" error is raised before any output). Reset cursor and
-        # continue with the chunked walk for THIS line only.
         pdf.set_x(pdf.l_margin)
 
-    # Walk the line in small chunks. 40 chars keeps even a wide-glyph
-    # script comfortably under the page width at 9 pt.
+    # Resumable chunked walk — every chunk is rendered independently so a
+    # partial failure can't duplicate already-committed text.
     CHUNK = 40
-    for start in range(0, len(line), CHUNK):
-        chunk = line[start : start + CHUNK]
+    for start in range(0, len(text), CHUNK):
+        chunk = text[start : start + CHUNK]
         try:
             pdf.set_x(pdf.l_margin)
-            pdf.multi_cell(epw, 5, chunk, new_x="LMARGIN", new_y="NEXT")
+            pdf.multi_cell(epw, 5, chunk, align=align, markdown=False,
+                           new_x="LMARGIN", new_y="NEXT")
         except Exception:
-            # Substitute this chunk's unrepresentable chars with '?' so the
-            # render still completes. Visible substitution, never silent
-            # drop. Note: chars from previous successful chunks are already
-            # on the page — we are NOT re-emitting them.
             try:
                 pdf.set_x(pdf.l_margin)
                 pdf.multi_cell(
                     epw, 5,
                     chunk.encode("latin-1", "replace").decode("latin-1"),
+                    align=align,
+                    markdown=False,
                     new_x="LMARGIN",
                     new_y="NEXT",
                 )
             except Exception as exc:
-                logger.error("fpdf2 chunk render failed even after ASCII fallback: %r", exc)
+                logger.error("fpdf2 chunk render failed: %r", exc)
 
 
-def _find_unicode_font() -> Path | None:
-    """Search for a Unicode-capable TrueType font.
-
-    Order:
-      1. Bundled `config/fonts/DejaVuSans.ttf` in the repo — guaranteed
-         present on every deploy, no dependency on host packages.
-      2. System paths (kept as a fallback in case the bundled file is
-         stripped by a packaging step).
-    """
-    # Bundled next to this module so the wheel includes it (hatch packages
-    # the `app/` directory only — anything outside isn't shipped on Render).
-    bundled = Path(__file__).resolve().parent / "fonts" / "DejaVuSans.ttf"
+def _find_unicode_font(*, bold: bool = False) -> Path | None:
+    """Search for a Unicode-capable TrueType font. Bundled DejaVu Sans
+    (Regular + Bold) is the first choice; system paths fall back."""
+    fname = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+    bundled = Path(__file__).resolve().parent / "fonts" / fname
     if bundled.exists():
         return bundled
 
-    candidates = (
-        # Debian / Ubuntu (Render's base image).
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-        # Other Linux distros.
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-        # macOS dev.
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/Library/Fonts/Arial Unicode.ttf",
-    )
+    # Fallback: search system paths.
+    if bold:
+        candidates = (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        )
+    else:
+        candidates = (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial Unicode.ttf",
+        )
     for path in candidates:
         p = Path(path)
         if p.exists():
             return p
+    # If bold is missing, fall back to Regular so headings render in the
+    # right script (just non-bold).
+    if bold:
+        return _find_unicode_font(bold=False)
     return None
 
 

@@ -1,5 +1,6 @@
 import { signOut } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
+import { LocaleSelect } from "@/components/settings/LocaleSelect";
 import { apiFetch } from "@/lib/api/client";
 import type { User } from "@/lib/api/types";
 
@@ -18,9 +19,11 @@ export default async function ProfilePage() {
         <Row label="Email" value={me.email} />
         <Row label="Name" value={me.name ?? "—"} />
         <Row label="Role" value={me.role} />
-        <Row label="Locale" value={me.locale} />
         <Row label="Firm ID" value={me.firm_id} />
         <Row label="Email verified" value={me.email_verified ? "yes" : "no"} />
+      </section>
+      <section className="mt-5 rounded-lg border border-border bg-bg p-5">
+        <LocaleSelect current={me.locale} />
       </section>
       <form action={logoutAction} className="mt-5">
         <Button type="submit" variant="outline">Sign out</Button>

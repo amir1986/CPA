@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -242,6 +243,26 @@ async def me(
     user = await session.get(User, principal.user_id)
     if user is None:
         raise ApiError(status=401, code="invalid_token", detail="user no longer exists")
+    return _user_out(user)
+
+
+class LocalePatchIn(BaseModel):
+    locale: str   # "en" or "he"
+
+
+@router.patch("/me/locale", response_model=UserOut)
+async def update_locale(
+    payload: LocalePatchIn,
+    principal: RequestPrincipal = Depends(current_principal),
+    session: AsyncSession = Depends(get_session),
+) -> UserOut:
+    if payload.locale not in ("en", "he"):
+        raise ApiError(status=400, code="bad_request", detail="locale must be 'en' or 'he'")
+    user = await session.get(User, principal.user_id)
+    if user is None:
+        raise ApiError(status=401, code="invalid_token", detail="user no longer exists")
+    user.locale = payload.locale
+    await session.flush()
     return _user_out(user)
 
 

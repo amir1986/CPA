@@ -42,6 +42,9 @@ dependencies = [
     # Hebrew via system TTFs (e.g. /usr/share/fonts/truetype/dejavu/), so we
     # don't need WeasyPrint's heavy cairo/pango stack on Render's free tier.
     "fpdf2>=2.7",
+    # Hebrew / Arabic right-to-left visual reordering for the PDF renderer
+    # (logical → display order). Pure Python, no system deps.
+    "python-bidi>=0.6",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-instrumentation-fastapi>=0.48b0",
@@ -120,6 +123,7 @@ packages = ["app"]
 # CJK glyph support without depending on host fonts.
 [tool.hatch.build.targets.wheel.force-include]
 "app/audit/workpapers/fonts/DejaVuSans.ttf" = "app/audit/workpapers/fonts/DejaVuSans.ttf"
+"app/audit/workpapers/fonts/DejaVuSans-Bold.ttf" = "app/audit/workpapers/fonts/DejaVuSans-Bold.ttf"
 
 [tool.ruff]
 line-length = 100
