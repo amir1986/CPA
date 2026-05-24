@@ -47,21 +47,23 @@ async function skipAction() {
       cache: "no-store",
     });
   } catch (err) {
-    // If we can't even reach the api, surface that — the signIn would
-    // fail with the same root cause anyway.
     const detail = `api_unreachable: ${(err as Error).message} (tried ${API_BASE})`;
     redirect(`/login?error=${encodeURIComponent(detail)}`);
   }
 
+  // Sign in using the FormData + separate-options pattern. The plain-object
+  // form of signIn() seemed to trip CredentialsSignin under Auth.js v5 +
+  // Next 15 from Server Actions; this matches the docs example exactly.
+  const fd = new FormData();
+  fd.append("email", SKIP_EMAIL);
+  fd.append("password", SKIP_PASSWORD);
+
   try {
-    await signIn("credentials", {
-      email: SKIP_EMAIL,
-      password: SKIP_PASSWORD,
-      redirectTo: "/engagements",
-    });
+    await signIn("credentials", fd, { redirectTo: "/engagements" });
   } catch (err) {
     if ((err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT")) throw err;
-    redirect(`/login?error=${encodeURIComponent(`skip_failed: ${(err as Error).message ?? "unknown"}`)}`);
+    const msg = (err as Error).message ?? "unknown";
+    redirect(`/login?error=${encodeURIComponent(`skip_failed: ${msg}`)}`);
   }
 }
 
