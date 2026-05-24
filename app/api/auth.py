@@ -88,6 +88,59 @@ async def current_principal(
     return principal
 
 
+# Email of the shared "Skip → Demo User" account created by the web login
+# page. Kept in lockstep with web/src/app/(auth)/login/page.tsx::SKIP_EMAIL.
+DEMO_USER_EMAIL = "demo@cpa.example"
+
+
+async def _principal_for_demo_user(session: AsyncSession) -> RequestPrincipal | None:
+    """Resolve the canonical Skip-Demo user, treating it as admin.
+
+    Returns None if the demo user hasn't been created yet (the very first
+    Skip click on a fresh deploy registers it, so this is rare).
+    """
+    from sqlalchemy import select
+
+    res = await session.execute(select(User).where(User.email == DEMO_USER_EMAIL))
+    user = res.scalar_one_or_none()
+    if user is None:
+        return None
+    return RequestPrincipal(
+        user_id=user.id,
+        firm_id=user.firm_id,
+        role=UserRole.admin,           # Demo user is treated as admin everywhere.
+        email=user.email,
+        is_admin=True,
+    )
+
+
+async def current_principal_permissive(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_session),
+) -> RequestPrincipal:
+    """Like ``current_principal``, but falls back to the demo user when no
+    credentials are presented.
+
+    Used by routes that the deployed web tier hits from the browser via the
+    bare Next.js ``rewrites()`` proxy, which can't inject an Authorization
+    header. Authenticated requests still resolve to the real user — the demo
+    fallback only kicks in when both Authorization and X-API-Key are absent.
+    """
+    principal = await _principal_from_token(authorization, session)
+    if principal is None:
+        principal = await _principal_from_api_key(x_api_key, session)
+    if principal is None:
+        principal = await _principal_for_demo_user(session)
+    if principal is None:
+        raise ApiError(
+            status=401,
+            code="unauthorized",
+            detail="missing credentials and demo user not provisioned",
+        )
+    return principal
+
+
 async def require_admin(
     principal: RequestPrincipal = Depends(current_principal),
 ) -> RequestPrincipal:
@@ -97,7 +150,9 @@ async def require_admin(
 
 
 __all__ = [
+    "DEMO_USER_EMAIL",
     "RequestPrincipal",
     "current_principal",
+    "current_principal_permissive",
     "require_admin",
 ]
