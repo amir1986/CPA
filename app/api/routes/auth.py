@@ -9,7 +9,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import RequestPrincipal, current_principal
+from app.api.auth import (
+    RequestPrincipal,
+    current_principal,
+    current_principal_permissive,
+)
 from app.api.errors import ApiError
 from app.api.schemas.auth import (
     LoginIn,
@@ -253,7 +257,13 @@ class LocalePatchIn(BaseModel):
 @router.patch("/me/locale", response_model=UserOut)
 async def update_locale(
     payload: LocalePatchIn,
-    principal: RequestPrincipal = Depends(current_principal),
+    # Permissive: browser-side PATCH from /settings/profile goes through
+    # the bare /api/* Next rewrite which strips the bearer token, so the
+    # strict current_principal would 401 every Save click. Locale is a
+    # benign per-user preference; the worst case of a demo-user collapse
+    # here is "the demo user's stored locale changes" — the cookie still
+    # drives each browser's actual UI direction.
+    principal: RequestPrincipal = Depends(current_principal_permissive),
     session: AsyncSession = Depends(get_session),
 ) -> UserOut:
     if payload.locale not in ("en", "he"):

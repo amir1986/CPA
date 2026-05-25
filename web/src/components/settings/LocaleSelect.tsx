@@ -27,25 +27,38 @@ export function LocaleSelect({ current }: { current: string }) {
   function save() {
     setError(null);
     setSaved(false);
+    // 1. Optimistically flip the UI FIRST — the cookie is the source of
+    //    truth for SSR rendering, the api save is best-effort persistence.
+    //    The previous code aborted the whole flow when the PATCH failed
+    //    (401 because the bare /api/* rewrite doesn't inject auth), so the
+    //    user saw nothing change.
+    document.cookie = `cpa_locale=${pick}; path=/; max-age=31536000; SameSite=Lax`;
+    document.documentElement.lang = pick;
+    document.documentElement.dir = pick === "he" ? "rtl" : "ltr";
+
     startTransition(async () => {
-      const res = await fetch("/api/auth/me/locale", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locale: pick }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { detail?: string };
-        setError(body.detail ?? `save failed (${res.status})`);
-        return;
+      // 2. Best-effort persistence to the user row. Failures are logged
+      //    visibly but don't undo the UI flip — the cookie still drives
+      //    every subsequent render.
+      try {
+        const res = await fetch("/api/auth/me/locale", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ locale: pick }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { detail?: string };
+          setError(
+            body.detail
+              ? `${tr("settings.saved")} (locally — server: ${body.detail})`
+              : `${tr("settings.saved")} (locally — server returned ${res.status})`,
+          );
+        }
+      } catch (e) {
+        setError(`${tr("settings.saved")} (locally — ${(e as Error).message})`);
       }
-      // Persist a client-readable cookie so the next SSR pass can set
-      // <html dir="rtl"> immediately, without an extra round-trip.
-      document.cookie = `cpa_locale=${pick}; path=/; max-age=31536000; SameSite=Lax`;
       setSaved(true);
-      // Apply RTL to the live document so the change is visible right away.
-      document.documentElement.lang = pick;
-      document.documentElement.dir = pick === "he" ? "rtl" : "ltr";
-      // Re-render the tree so server components pick up the new locale.
+      // 3. Re-render the tree so server components pick up the new locale.
       router.refresh();
     });
   }
