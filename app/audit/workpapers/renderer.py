@@ -90,26 +90,30 @@ def _fpdf_render(body_md: str, FPDF: type) -> bytes:
     pdf.add_page()
 
     # Load a Unicode-capable TTF (bundled DejaVu Sans first, then system
-    # fallbacks). For real Hebrew/CJK rendering both Regular and Bold faces
-    # are registered under the same family name so `set_font(uni, 'B')`
-    # works for headings + inline **bold**.
+    # fallbacks). For real Hebrew/CJK rendering ALL FOUR style faces
+    # (Regular, Bold, Italic, Bold-Italic) must be registered under the
+    # same family name — otherwise pdf.set_font("uni", style="I") raises
+    # `Undefined font: uniI`. If a particular style's TTF isn't available
+    # we register the closest fallback (Regular for Italic, Bold for
+    # Bold-Italic) so the render never crashes; visual italic differen-
+    # tiation is lost in that case but the text + glyphs are intact.
     font_name = "Helvetica"
-    font_path = _find_unicode_font()
-    bold_path = _find_unicode_font(bold=True)
-    if font_path is not None:
+    regular_path = _find_unicode_font(style="")
+    bold_path = _find_unicode_font(style="B")
+    italic_path = _find_unicode_font(style="I")
+    bold_italic_path = _find_unicode_font(style="BI")
+    if regular_path is not None:
         try:
-            _add_font(pdf, "uni", "", font_path)
-            if bold_path is not None:
-                try:
-                    _add_font(pdf, "uni", "B", bold_path)
-                except Exception as exc:
-                    logger.warning("bold TTF load failed: %r — bold will simulate", exc)
+            _add_font(pdf, "uni", "", regular_path)
+            _add_font(pdf, "uni", "B", bold_path or regular_path)
+            _add_font(pdf, "uni", "I", italic_path or regular_path)
+            _add_font(pdf, "uni", "BI", bold_italic_path or bold_path or regular_path)
             font_name = "uni"
         except Exception as exc:
             logger.warning(
                 "fpdf2 add_font(%s) failed: %r — falling back to Helvetica "
                 "(non-Latin glyphs will render as substitution chars)",
-                font_path, exc,
+                regular_path, exc,
             )
 
     pdf.set_font(font_name, size=10)
@@ -249,37 +253,49 @@ def _emit(pdf, text: str, epw: float, *, align: str, markdown: bool) -> None:
                 logger.error("fpdf2 chunk render failed: %r", exc)
 
 
-def _find_unicode_font(*, bold: bool = False) -> Path | None:
-    """Search for a Unicode-capable TrueType font. Bundled DejaVu Sans
-    (Regular + Bold) is the first choice; system paths fall back."""
-    fname = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+_FONT_FILES = {
+    "": "DejaVuSans.ttf",
+    "B": "DejaVuSans-Bold.ttf",
+    "I": "DejaVuSans-Oblique.ttf",
+    "BI": "DejaVuSans-BoldOblique.ttf",
+}
+
+_SYSTEM_PATHS = {
+    "": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+    ),
+    "B": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    ),
+    "I": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Oblique.ttf",
+    ),
+    "BI": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-BoldOblique.ttf",
+    ),
+}
+
+
+def _find_unicode_font(*, style: str = "") -> Path | None:
+    """Search for a Unicode-capable TrueType font for the requested style
+    ('', 'B', 'I', 'BI'). Returns None if not found — caller decides whether
+    to fall back to a different style's TTF."""
+    fname = _FONT_FILES.get(style, _FONT_FILES[""])
     bundled = Path(__file__).resolve().parent / "fonts" / fname
     if bundled.exists():
         return bundled
-
-    # Fallback: search system paths.
-    if bold:
-        candidates = (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-        )
-    else:
-        candidates = (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/Library/Fonts/Arial Unicode.ttf",
-        )
-    for path in candidates:
+    for path in _SYSTEM_PATHS.get(style, ()):
         p = Path(path)
         if p.exists():
             return p
-    # If bold is missing, fall back to Regular so headings render in the
-    # right script (just non-bold).
-    if bold:
-        return _find_unicode_font(bold=False)
     return None
 
 
