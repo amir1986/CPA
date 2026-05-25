@@ -38,7 +38,10 @@ type AppJWT = {
 const API_BASE = (process.env.INTERNAL_API_BASE ?? "http://localhost:8000").replace(/\/$/, "");
 
 async function backendLogin(email: string, password: string): Promise<LoginOut | null> {
-  const res = await fetch(`${API_BASE}/auth/login`, {
+  // Render free-tier spins down idle services after ~15 min — first request
+  // after wake takes 30-60s and frequently 502s. Retry transient 5xx so the
+  // user doesn't get bounced back to /login with skip_failed [login=502].
+  const res = await fetchWithColdStartRetry(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -46,6 +49,32 @@ async function backendLogin(email: string, password: string): Promise<LoginOut |
   });
   if (!res.ok) return null;
   return (await res.json()) as LoginOut;
+}
+
+
+async function fetchWithColdStartRetry(url: string, init: RequestInit): Promise<Response> {
+  // ~90 s total budget — covers Render free-tier cold start AND a
+  // mid-deploy restart window. Retries only on 502 / 503 / 504 (the
+  // edge's "upstream not ready" signals) or fetch throws.
+  const DELAYS_MS = [1500, 3000, 5000, 8000, 12000, 15000, 20000, 25000];
+  let lastResp: Response | null = null;
+  let lastErr: unknown = null;
+  for (let i = 0; i <= DELAYS_MS.length; i++) {
+    try {
+      const resp = await fetch(url, init);
+      lastResp = resp;
+      if (resp.status >= 502 && resp.status <= 504) {
+        if (i < DELAYS_MS.length) await new Promise((r) => setTimeout(r, DELAYS_MS[i]));
+        continue;
+      }
+      return resp;
+    } catch (err) {
+      lastErr = err;
+      if (i < DELAYS_MS.length) await new Promise((r) => setTimeout(r, DELAYS_MS[i]));
+    }
+  }
+  if (lastResp) return lastResp;
+  throw lastErr ?? new Error("request failed");
 }
 
 async function backendRefresh(

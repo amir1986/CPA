@@ -80,6 +80,17 @@ export const he: PartialDeep<Dict> = {
     email_verified: "דוא״ל מאומת",
     yes: "כן",
     no: "לא",
+    standards_title: "אוסף התקנים",
+    standards_hint:
+      "קטעי US GAAP / IFRS / תקנים ישראליים שנטענים מראש ומשמשים את ההשוואה ואת הציטוטים. הרענון מוריד מחדש כל מקור מוגדר ויוצר ממנו chunks מחדש. בטוח ללחוץ בכל עת.",
+    refresh_standards: "רענן תקנים",
+    refreshing: "מרענן…",
+    last_refreshed: "רוענן לאחרונה",
+    chunks: "{n} chunks",
+    no_runs: "אין עדיין רענונים — לחץ למעלה כדי לטעון את אוסף התקנים.",
+    status_running: "פועל",
+    status_done: "הושלם",
+    status_failed: "נכשל",
   },
   common: {
     back: "חזרה",

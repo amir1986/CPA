@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { signOut } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { LocaleSelect } from "@/components/settings/LocaleSelect";
+import { StandardsRefresh } from "@/components/settings/StandardsRefresh";
 import { apiFetch } from "@/lib/api/client";
 import type { User } from "@/lib/api/types";
 import { t, type Locale } from "@/lib/i18n";
@@ -34,6 +35,11 @@ export default async function ProfilePage() {
       <section className="mt-5 rounded-lg border border-border bg-bg p-5">
         <LocaleSelect current={me.locale} />
       </section>
+      {(me.role === "admin" || me.email === "demo@cpa.example") && (
+        <section className="mt-5 rounded-lg border border-border bg-bg p-5">
+          <StandardsRefresh />
+        </section>
+      )}
       <form action={logoutAction} className="mt-5">
         <Button type="submit" variant="outline">
           {tr("settings.sign_out")}

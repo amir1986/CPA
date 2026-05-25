@@ -31,12 +31,43 @@ async function loginAction(formData: FormData) {
   }
 }
 
+async function _fetchWithColdStartRetry(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  // Render free-tier spins down idle services after ~15 min — the first
+  // request after wake takes 30-60 s and frequently 502s. The api may
+  // also be transiently down during a Render redeploy (~30-60 s). Total
+  // retry budget here is ~90 s so the user doesn't see the raw 502 page
+  // for either case.
+  const DELAYS_MS = [1500, 3000, 5000, 8000, 12000, 15000, 20000, 25000];
+  let lastResp: Response | null = null;
+  let lastErr: unknown = null;
+  for (let i = 0; i <= DELAYS_MS.length; i++) {
+    try {
+      const resp = await fetch(url, init);
+      lastResp = resp;
+      if (resp.status >= 502 && resp.status <= 504) {
+        if (i < DELAYS_MS.length) await new Promise((r) => setTimeout(r, DELAYS_MS[i]));
+        continue;
+      }
+      return resp;
+    } catch (err) {
+      lastErr = err;
+      if (i < DELAYS_MS.length) await new Promise((r) => setTimeout(r, DELAYS_MS[i]));
+    }
+  }
+  if (lastResp) return lastResp;
+  throw lastErr ?? new Error("request failed");
+}
+
+
 async function skipAction() {
   "use server";
   // Idempotent register: 409 (email_taken) is the expected steady-state response.
   let registerStatus = "skipped";
   try {
-    const r = await fetch(`${API_BASE}/auth/register`, {
+    const r = await _fetchWithColdStartRetry(`${API_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -58,7 +89,7 @@ async function skipAction() {
   // CredentialsSignin, the issue is inside Auth.js's machinery, not the api.
   let loginStatus = "?";
   try {
-    const r = await fetch(`${API_BASE}/auth/login`, {
+    const r = await _fetchWithColdStartRetry(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: SKIP_EMAIL, password: SKIP_PASSWORD }),

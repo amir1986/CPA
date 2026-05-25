@@ -90,6 +90,17 @@ export const en = {
     email_verified: "Email verified",
     yes: "yes",
     no: "no",
+    standards_title: "Standards corpus",
+    standards_hint:
+      "Pre-fetched US GAAP / IFRS / Israeli standards excerpts used by the USGAAP <> IFRS comparison and citation grounding. Refresh re-fetches every configured source and re-embeds the chunks. Idempotent — safe to click any time.",
+    refresh_standards: "Refresh standards",
+    refreshing: "Refreshing…",
+    last_refreshed: "Last refreshed",
+    chunks: "{n} chunks",
+    no_runs: "No refreshes yet — click above to load the standards corpus.",
+    status_running: "Running",
+    status_done: "Done",
+    status_failed: "Failed",
   },
   common: {
     back: "Back",

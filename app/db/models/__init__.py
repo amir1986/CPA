@@ -42,3 +42,4 @@ from app.db.models.engagement import (  # noqa: F401
 )
 from app.db.models.files import File, FileKind, ParsedStatus  # noqa: F401
 from app.db.models.observability import AgentRun, AuditLog, QueryLog  # noqa: F401
+from app.db.models.standards_ingest import StandardsIngestRun, StandardsIngestStatus  # noqa: F401
