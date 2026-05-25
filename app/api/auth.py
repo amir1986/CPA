@@ -79,12 +79,25 @@ async def current_principal(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     session: AsyncSession = Depends(get_session),
 ) -> RequestPrincipal:
-    """Resolve the request principal from Authorization or X-API-Key."""
+    """Resolve the request principal.
+
+    Login was removed (commit 'feat(auth): drop login flow — every request
+    resolves to the shared demo user'), so every request — whether or not
+    it carries an Authorization or X-API-Key — falls through to the demo
+    user. The strict-mode resolution (real JWT, real API key) is still
+    tried first so any pre-existing client with credentials keeps working.
+    """
     principal = await _principal_from_token(authorization, session)
     if principal is None:
         principal = await _principal_from_api_key(x_api_key, session)
     if principal is None:
-        raise ApiError(status=401, code="unauthorized", detail="missing credentials")
+        principal = await _principal_for_demo_user(session)
+    if principal is None:
+        raise ApiError(
+            status=503,
+            code="demo_user_unavailable",
+            detail="demo user has not been provisioned — api startup hook should have created it",
+        )
     return principal
 
 

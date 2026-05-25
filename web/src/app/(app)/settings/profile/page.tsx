@@ -1,17 +1,10 @@
 import { cookies } from "next/headers";
 
-import { signOut } from "@/lib/auth";
-import { Button } from "@/components/ui/button";
 import { LocaleSelect } from "@/components/settings/LocaleSelect";
 import { StandardsRefresh } from "@/components/settings/StandardsRefresh";
 import { apiFetch } from "@/lib/api/client";
 import type { User } from "@/lib/api/types";
 import { t, type Locale } from "@/lib/i18n";
-
-async function logoutAction() {
-  "use server";
-  await signOut({ redirectTo: "/login" });
-}
 
 export default async function ProfilePage() {
   const cookieStore = await cookies();
@@ -40,11 +33,6 @@ export default async function ProfilePage() {
           <StandardsRefresh />
         </section>
       )}
-      <form action={logoutAction} className="mt-5">
-        <Button type="submit" variant="outline">
-          {tr("settings.sign_out")}
-        </Button>
-      </form>
     </div>
   );
 }

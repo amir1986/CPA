@@ -42,6 +42,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.ollama_model,
         len(settings.resolved_api_keys()),
     )
+    # Login was removed (every request resolves to the shared demo user).
+    # Ensure that user + its firm exist before serving anything; idempotent.
+    try:
+        from app.services.demo_bootstrap import ensure_demo_user_exists
+        await ensure_demo_user_exists()
+    except Exception:
+        logging.getLogger(__name__).exception("demo user bootstrap failed (continuing)")
     yield
     logging.getLogger(__name__).info("CPA api shutting down")
 
