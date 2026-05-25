@@ -18,34 +18,37 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 
+import { useLocale } from "@/lib/i18n/client";
+import { t, type Locale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 type Item = { href: string; label: string; icon: React.ComponentType<{ className?: string }> };
 
-function buildItems(eid: string | undefined): { primary: Item[]; secondary: Item[] } {
+function buildItems(eid: string | undefined, locale: Locale): { primary: Item[]; secondary: Item[] } {
   const E = (path: string) => (eid ? `/engagements/${eid}${path}` : "/engagements");
+  const tr = (k: string) => t(k, locale);
   return {
     primary: [
-      { href: "/engagements", label: "Engagements", icon: LayoutDashboard },
+      { href: "/engagements", label: tr("nav.engagements"), icon: LayoutDashboard },
       ...(eid
         ? [
-            { href: E(""), label: "Dashboard", icon: LayoutDashboard },
-            { href: E("/chat"), label: "Chat", icon: MessageSquare },
-            { href: E("/documents"), label: "Documents", icon: FileText },
-            { href: E("/books/trial-balance"), label: "Books", icon: BookOpen },
-            { href: E("/analysis"), label: "Analysis", icon: BarChart3 },
-            { href: E("/audit/samples"), label: "Audit", icon: ClipboardCheck },
-            { href: E("/compare"), label: "Compare", icon: GitCompareArrows },
-            { href: E("/traces"), label: "Traces", icon: ScanSearch },
+            { href: E(""), label: tr("nav.dashboard"), icon: LayoutDashboard },
+            { href: E("/chat"), label: tr("nav.chat"), icon: MessageSquare },
+            { href: E("/documents"), label: tr("nav.documents"), icon: FileText },
+            { href: E("/books/trial-balance"), label: tr("nav.books"), icon: BookOpen },
+            { href: E("/analysis"), label: tr("nav.analysis"), icon: BarChart3 },
+            { href: E("/audit/samples"), label: tr("nav.audit"), icon: ClipboardCheck },
+            { href: E("/compare"), label: tr("nav.compare"), icon: GitCompareArrows },
+            { href: E("/traces"), label: tr("nav.traces"), icon: ScanSearch },
           ]
         : []),
     ],
     secondary: [
-      { href: "/usgaap-ifrs", label: "USGAAP <> IFRS", icon: ArrowLeftRight },
-      { href: "/sources", label: "Sources", icon: Network },
-      { href: "/admin", label: "Admin", icon: Shield },
-      { href: "/settings/profile", label: "Settings", icon: Settings },
-      { href: "/tweaks", label: "Tweaks", icon: SlidersHorizontal },
+      { href: "/usgaap-ifrs", label: tr("nav.usgaap_ifrs"), icon: ArrowLeftRight },
+      { href: "/sources", label: tr("nav.sources"), icon: Network },
+      { href: "/admin", label: tr("nav.admin"), icon: Shield },
+      { href: "/settings/profile", label: tr("nav.settings"), icon: Settings },
+      { href: "/tweaks", label: tr("nav.tweaks"), icon: SlidersHorizontal },
     ],
   };
 }
@@ -69,7 +72,8 @@ function NavLink({ item, active }: { item: Item; active: boolean }) {
 export function Sidebar() {
   const pathname = usePathname();
   const params = useParams<{ eid?: string }>();
-  const { primary, secondary } = buildItems(params.eid);
+  const locale = useLocale();
+  const { primary, secondary } = buildItems(params.eid, locale);
 
   return (
     <aside className="flex h-screen w-60 shrink-0 flex-col border-e border-border bg-bg">

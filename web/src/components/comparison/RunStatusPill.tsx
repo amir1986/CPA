@@ -3,15 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-const TERMINAL = new Set(["done", "failed"]);
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
 
-const LABELS: Record<string, string> = {
-  parsing: "Parsing files…",
-  detecting: "Detecting framework…",
-  comparing: "Comparing standards…",
-  done: "Done",
-  failed: "Failed",
-};
+const TERMINAL = new Set(["done", "failed"]);
 
 const TONES: Record<string, string> = {
   parsing: "border-info bg-info/10 text-info",
@@ -23,6 +18,7 @@ const TONES: Record<string, string> = {
 
 export function RunStatusPill({ runId, initial }: { runId: string; initial: string }) {
   const router = useRouter();
+  const locale = useLocale();
   const [status, setStatus] = useState(initial);
 
   useEffect(() => {
@@ -87,7 +83,7 @@ export function RunStatusPill({ runId, initial }: { runId: string; initial: stri
       {!TERMINAL.has(status) && (
         <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-current" />
       )}
-      {LABELS[status] ?? status}
+      {t(`usgaap.status_${status}`, locale)}
     </span>
   );
 }

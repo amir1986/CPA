@@ -4,8 +4,12 @@ import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
 
 export function ExportMemoButton({ runId }: { runId: string }) {
+  const locale = useLocale();
+  const tr = (k: string) => t(k, locale);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,10 +42,10 @@ export function ExportMemoButton({ runId }: { runId: string }) {
     <div className="flex items-center gap-2" data-testid="export-controls">
       <Button onClick={() => download("md")} disabled={busy} data-testid="export-md">
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-        Export to memo
+        {tr("usgaap.export_to_memo")}
       </Button>
       <Button variant="outline" onClick={() => download("pdf")} disabled={busy}>
-        PDF
+        {tr("usgaap.pdf")}
       </Button>
       {error && <span className="text-sm text-danger">{error}</span>}
     </div>

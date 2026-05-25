@@ -1,3 +1,8 @@
+"use client";
+
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
+
 import { CiteChip, type ChipCitation } from "./CiteChip";
 
 export type IssueData = {
@@ -17,6 +22,8 @@ export type IssueData = {
 };
 
 export function IssueCard({ issue, currentFramework }: { issue: IssueData; currentFramework: "US" | "IFRS" }) {
+  const locale = useLocale();
+  const tr = (k: string, v?: Record<string, string | number>) => t(k, locale, v);
   const isUS = currentFramework === "US";
   const currentCites = isUS ? issue.gaap_citations : issue.ifrs_citations;
   const otherCites = isUS ? issue.ifrs_citations : issue.gaap_citations;
@@ -24,8 +31,9 @@ export function IssueCard({ issue, currentFramework }: { issue: IssueData; curre
   const otherStandardsSummary = isUS ? issue.ifrs_summary : issue.gaap_summary;
   const currentVerif = isUS ? issue.gaap_verification : issue.ifrs_verification;
   const otherVerif = isUS ? issue.ifrs_verification : issue.gaap_verification;
-  const currentLabel = isUS ? "US GAAP (current)" : "IFRS (current)";
-  const otherLabel = isUS ? "IFRS (converted to)" : "US GAAP (converted to)";
+  const fwLabel = (fw: "US" | "IFRS") => (fw === "US" ? tr("usgaap.us_gaap") : tr("usgaap.ifrs"));
+  const currentLabel = tr("usgaap.current_treatment", { fw: fwLabel(currentFramework) });
+  const otherLabel = tr("usgaap.converted_to", { fw: fwLabel(isUS ? "IFRS" : "US") });
 
   return (
     <article
@@ -49,6 +57,7 @@ export function IssueCard({ issue, currentFramework }: { issue: IssueData; curre
           userCites={issue.current_user_cites}
           policySummary={issue.current_summary}
           verification={currentVerif}
+          locale={locale}
         />
         <Pane
           label={otherLabel}
@@ -56,6 +65,7 @@ export function IssueCard({ issue, currentFramework }: { issue: IssueData; curre
           standardsSummary={otherStandardsSummary}
           standardsCites={otherCites}
           verification={otherVerif}
+          locale={locale}
         />
       </div>
 
@@ -63,12 +73,14 @@ export function IssueCard({ issue, currentFramework }: { issue: IssueData; curre
         <footer className="mt-4 rounded-md border border-border bg-bg-elev p-3 text-sm">
           {issue.differences && (
             <p>
-              <span className="font-medium">Key differences:</span> {issue.differences}
+              <span className="font-medium">{tr("usgaap.key_differences")}</span>{" "}
+              {issue.differences}
             </p>
           )}
           {issue.conversion_impact && (
             <p className="mt-1">
-              <span className="font-medium">Conversion impact:</span> {issue.conversion_impact}
+              <span className="font-medium">{tr("usgaap.conversion_impact")}</span>{" "}
+              {issue.conversion_impact}
             </p>
           )}
         </footer>
@@ -85,6 +97,7 @@ function Pane({
   userCites,
   policySummary,
   verification,
+  locale,
 }: {
   label: string;
   tone: "current" | "other";
@@ -93,7 +106,9 @@ function Pane({
   userCites?: { ref: string; anchor: string; quote: string }[];
   policySummary?: string;
   verification?: string | null;
+  locale: "en" | "he";
 }) {
+  const tr = (k: string) => t(k, locale);
   return (
     <section
       className={
@@ -108,7 +123,7 @@ function Pane({
 
       {policySummary && (
         <div className="mb-3">
-          <p className="text-xs uppercase text-fg-subtle">From your document</p>
+          <p className="text-xs uppercase text-fg-subtle">{tr("usgaap.from_your_document")}</p>
           <p className="mt-1 whitespace-pre-wrap text-sm">{policySummary}</p>
           {userCites && userCites.length > 0 && (
             <ul className="mt-2 space-y-1 text-xs text-fg-muted">
@@ -123,16 +138,16 @@ function Pane({
         </div>
       )}
 
-      <p className="text-xs uppercase text-fg-subtle">From standards</p>
+      <p className="text-xs uppercase text-fg-subtle">{tr("usgaap.from_standards")}</p>
       <p className="mt-1 whitespace-pre-wrap text-sm">
-        {standardsSummary ?? <span className="text-fg-muted">_(no standards retrieved — corpus may be empty)_</span>}
+        {standardsSummary ?? <span className="text-fg-muted">{tr("usgaap.no_standards_retrieved")}</span>}
       </p>
 
       {/* Verbatim cited paragraphs from the standards, shown inline beneath
           the summary so the source is right next to the implementation. */}
       {standardsCites.length > 0 && (
         <div className="mt-3 space-y-2">
-          <p className="text-xs uppercase text-fg-subtle">Source paragraphs (verbatim)</p>
+          <p className="text-xs uppercase text-fg-subtle">{tr("usgaap.source_paragraphs_verbatim")}</p>
           {standardsCites.map((c, i) => (
             <blockquote
               key={i}
@@ -154,7 +169,7 @@ function Pane({
           className="mt-3 rounded-md border border-warning/40 bg-warning/5 p-2 text-xs"
           data-testid="verifier-report"
         >
-          <p className="mb-1 font-medium text-warning">Verifier agent</p>
+          <p className="mb-1 font-medium text-warning">{tr("usgaap.verifier_agent")}</p>
           <p className="whitespace-pre-wrap text-fg">{verification}</p>
         </div>
       )}

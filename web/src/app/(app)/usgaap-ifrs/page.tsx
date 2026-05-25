@@ -1,40 +1,40 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 
 import { apiFetch } from "@/lib/api/client";
 import type { ComparisonRunSummary } from "@/lib/api/types";
+import { t, type Locale } from "@/lib/i18n";
 
 import { UploadDropzone } from "@/components/comparison/UploadDropzone";
 
 export const dynamic = "force-dynamic";
 
 export default async function UsGaapIfrsPage() {
+  const cookieStore = await cookies();
+  const locale: Locale = cookieStore.get("cpa_locale")?.value === "he" ? "he" : "en";
+  const tr = (k: string, v: Record<string, string | number> = {}) => t(k, locale, v);
+
   let runs: ComparisonRunSummary[] = [];
   try {
     runs = await apiFetch<ComparisonRunSummary[]>("/comparison/runs");
   } catch {
-    // Most likely: not signed in. Auth middleware will redirect; render empty.
     runs = [];
   }
 
   return (
     <div className="mx-auto max-w-5xl space-y-8" data-testid="usgaap-ifrs-page">
       <header>
-        <h1 className="text-xl font-semibold">USGAAP &lt;&gt; IFRS</h1>
-        <p className="mt-1 text-sm text-fg-muted">
-          Upload an accounting policy, contract, financial statements, trial balance
-          or GL. The model detects whether the content sits in US GAAP or IFRS,
-          identifies the accounting issues inside it, then renders a per-issue
-          side-by-side conversion with citations from the standards corpus.
-        </p>
+        <h1 className="text-xl font-semibold">{tr("usgaap.title")}</h1>
+        <p className="mt-1 text-sm text-fg-muted">{tr("usgaap.landing_intro")}</p>
       </header>
 
       <UploadDropzone />
 
       <section>
-        <h2 className="mb-3 text-sm font-medium">Recent runs</h2>
+        <h2 className="mb-3 text-sm font-medium">{tr("usgaap.recent_runs")}</h2>
         {runs.length === 0 ? (
           <p className="rounded-lg border border-dashed border-border bg-bg p-6 text-center text-sm text-fg-muted">
-            No runs yet — drop a file above to start your first comparison.
+            {tr("usgaap.no_runs_yet")}
           </p>
         ) : (
           <ul className="space-y-2" data-testid="recent-runs">
@@ -43,11 +43,13 @@ export default async function UsGaapIfrsPage() {
                 <Link href={`/usgaap-ifrs/${r.id}`} className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">
-                      {r.file_names.join(", ") || "(no files)"}
+                      {r.file_names.join(", ") || "—"}
                     </p>
                     <p className="text-xs text-fg-muted">
-                      {new Date(r.created_at).toLocaleString()} · {r.issue_count} issue
-                      {r.issue_count === 1 ? "" : "s"}
+                      {new Date(r.created_at).toLocaleString(locale)} ·{" "}
+                      {r.issue_count === 1
+                        ? tr("usgaap.issue_count_one", { n: r.issue_count })
+                        : tr("usgaap.issue_count_many", { n: r.issue_count })}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -66,7 +68,7 @@ export default async function UsGaapIfrsPage() {
                           : "border-info bg-info/10 text-info")
                       }
                     >
-                      {r.status}
+                      {tr(`usgaap.status_${r.status}`)}
                     </span>
                   </div>
                 </Link>

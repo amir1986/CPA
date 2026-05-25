@@ -5,12 +5,16 @@ import { useRouter } from "next/navigation";
 import { Loader2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
 
 const ACCEPTED = ".pdf,.docx,.xlsx,.csv";
 const MAX_FILES = 10;
 
 export function UploadDropzone() {
   const router = useRouter();
+  const locale = useLocale();
+  const tr = (k: string, v?: Record<string, string | number>) => t(k, locale, v);
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,10 +52,8 @@ export function UploadDropzone() {
         if (e.dataTransfer.files.length) void submit(e.dataTransfer.files);
       }}
     >
-      <h2 className="text-base font-medium">Drop a policy, contract, FS, TB or GL</h2>
-      <p className="mt-1 text-xs text-fg-muted">
-        PDF, DOCX, XLSX, CSV — up to {MAX_FILES} files, 50 MB each.
-      </p>
+      <h2 className="text-base font-medium">{tr("usgaap.drop_zone_title")}</h2>
+      <p className="mt-1 text-xs text-fg-muted">{tr("usgaap.drop_zone_hint")}</p>
       <input
         ref={inputRef}
         type="file"
@@ -65,7 +67,7 @@ export function UploadDropzone() {
       <div className="mt-5 flex items-center justify-center gap-3">
         <Button onClick={() => inputRef.current?.click()} disabled={busy}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          <span>{busy ? "Uploading…" : "Choose files"}</span>
+          <span>{busy ? tr("usgaap.uploading") : tr("usgaap.choose_files")}</span>
         </Button>
       </div>
       {error && <p className="mt-3 text-sm text-danger">{error}</p>}

@@ -5,6 +5,8 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
 
 const LABELS: Record<"en" | "he", string> = {
   en: "English",
@@ -13,6 +15,8 @@ const LABELS: Record<"en" | "he", string> = {
 
 export function LocaleSelect({ current }: { current: string }) {
   const router = useRouter();
+  const ctxLocale = useLocale();
+  const tr = (k: string) => t(k, ctxLocale);
   const [pick, setPick] = useState<"en" | "he">(
     current === "he" ? "he" : "en",
   );
@@ -49,7 +53,7 @@ export function LocaleSelect({ current }: { current: string }) {
   return (
     <div className="space-y-2" data-testid="locale-select">
       <label className="block text-xs uppercase tracking-wide text-fg-subtle">
-        Language
+        {tr("settings.language")}
       </label>
       <div className="flex items-center gap-2">
         <select
@@ -68,14 +72,11 @@ export function LocaleSelect({ current }: { current: string }) {
         </select>
         <Button size="sm" onClick={save} disabled={pending || pick === current}>
           {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-          {saved && pick === current ? "Saved" : "Save"}
+          {saved && pick === current ? tr("settings.saved") : tr("settings.save")}
         </Button>
         {error && <span className="text-sm text-danger">{error}</span>}
       </div>
-      <p className="text-xs text-fg-muted">
-        Hebrew flips the page direction to right-to-left and is also used by
-        the PDF memo export.
-      </p>
+      <p className="text-xs text-fg-muted">{tr("settings.language_hint")}</p>
     </div>
   );
 }
