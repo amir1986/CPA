@@ -16,10 +16,13 @@ export function ExportMemoButton({ runId }: { runId: string }) {
   async function download(format: "md" | "pdf") {
     setBusy(true);
     setError(null);
+    // Send the current UI locale so the api translates section headings
+    // + LLM-generated prose to Hebrew when the user has selected he.
+    // Verbatim source quotes stay in their original language regardless.
     const res = await fetch(`/api/comparison/runs/${runId}/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ format }),
+      body: JSON.stringify({ format, locale }),
     });
     setBusy(false);
     if (!res.ok) {

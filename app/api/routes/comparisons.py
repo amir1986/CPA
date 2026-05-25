@@ -112,6 +112,10 @@ class FrameworkPatch(BaseModel):
 
 class ExportIn(BaseModel):
     format: str = "md"   # "md" or "pdf"
+    # Locale for section headings + labels in the memo. Verbatim quotes
+    # are NEVER translated — they're preserved in their source language
+    # (Hebrew XLSX rows stay Hebrew, English standards stay English).
+    locale: str = "en"
 
 
 # ─────────────── helpers ───────────────
@@ -421,19 +425,79 @@ async def export_memo(
 
     generated_at = datetime.now(tz=UTC).isoformat(timespec="seconds")
     framework = (run.override_framework or run.detected_framework or Framework.US).value
+    locale = "he" if payload.locale == "he" else "en"
+    strings = _MEMO_STRINGS[locale]
+
+    # For Hebrew exports, translate ALL prose fields (rationale + per-issue
+    # summaries + verifier output + differences + conversion impact) in a
+    # SINGLE batched LLM call. Verbatim quotes are excluded — they stay in
+    # their source language so citation integrity is preserved.
+    rationale_text = run.rationale or ""
+    per_issue_prose: list[dict[str, str | None]] = []
+    if locale == "he":
+        flat: dict[str, str] = {}
+        if rationale_text.strip():
+            flat["_run.rationale"] = rationale_text
+        for i in issues:
+            for k in (
+                "current_summary",
+                "gaap_summary",
+                "ifrs_summary",
+                "differences",
+                "conversion_impact",
+                "gaap_verification",
+                "ifrs_verification",
+            ):
+                v = getattr(i, k, None)
+                if v and v.strip():
+                    flat[f"{i.id}.{k}"] = v
+        translated = await _translate_to_hebrew(flat)
+        rationale_text = translated.get("_run.rationale", rationale_text)
+        for i in issues:
+            per_issue_prose.append(
+                {
+                    k: translated.get(f"{i.id}.{k}", getattr(i, k))
+                    for k in (
+                        "current_summary",
+                        "gaap_summary",
+                        "ifrs_summary",
+                        "differences",
+                        "conversion_impact",
+                        "gaap_verification",
+                        "ifrs_verification",
+                    )
+                }
+            )
+    else:
+        for i in issues:
+            per_issue_prose.append(
+                {
+                    k: getattr(i, k)
+                    for k in (
+                        "current_summary",
+                        "gaap_summary",
+                        "ifrs_summary",
+                        "differences",
+                        "conversion_impact",
+                        "gaap_verification",
+                        "ifrs_verification",
+                    )
+                }
+            )
+
     sections: list[str] = []
     sections.append(
-        "> **DRAFT — REQUIRES PARTNER REVIEW**\n\n"
-        f"# USGAAP <> IFRS comparison\n\n"
-        f"**Detected framework:** {framework}\n"
-        f"**Generated:** {generated_at}\n"
+        f"> {strings['draft_banner']}\n\n"
+        f"# {strings['title']}\n\n"
+        f"**{strings['detected_framework']}:** {framework}\n"
+        f"**{strings['generated']}:** {generated_at}\n"
     )
     if run.confidence is not None:
-        sections.append(f"**Detection confidence:** {run.confidence:.2f}\n")
-    if run.rationale:
-        sections.append(f"**Rationale:** {run.rationale}\n")
-    for i in issues:
-        sections.append(_format_issue_section(i))
+        sections.append(f"**{strings['confidence']}:** {run.confidence:.2f}\n")
+    if rationale_text:
+        sections.append(f"**{strings['rationale']}:** {rationale_text}\n")
+    for issue_idx, i in enumerate(issues):
+        sections.append(_format_issue_section(i, per_issue_prose[issue_idx], locale))
     full = "\n\n---\n\n".join(sections)
 
     safe_name = f"usgaap-ifrs-comparison-{run.id}"
@@ -479,37 +543,157 @@ async def export_memo(
     )
 
 
-def _format_issue_section(i: ComparisonIssue) -> str:
+# ─────────────── memo i18n + translation ───────────────
+#
+# When the user has selected Hebrew (locale=he on the export request),
+# the memo's section headings + LLM-generated prose (summaries, verifier
+# output, differences, conversion impact) are rendered in Hebrew, while
+# verbatim cited quotes from US GAAP / IFRS standards stay in their
+# source language (auditors need the original text for citation
+# integrity). User-document quotes also stay verbatim — they were
+# uploaded in their native language to begin with.
+
+_MEMO_STRINGS = {
+    "en": {
+        "draft_banner": "**DRAFT — REQUIRES PARTNER REVIEW**",
+        "title": "USGAAP <> IFRS comparison",
+        "detected_framework": "Detected framework",
+        "generated": "Generated",
+        "confidence": "Detection confidence",
+        "rationale": "Rationale",
+        "current_treatment": "Current treatment (from your document)",
+        "source_paragraphs_user": "Source paragraphs from your document",
+        "us_gaap_treatment": "US GAAP treatment",
+        "source_paragraphs_gaap": "Source paragraphs from US GAAP standards",
+        "ifrs_treatment": "IFRS treatment",
+        "source_paragraphs_ifrs": "Source paragraphs from IFRS standards",
+        "verifier_us": "Verifier agent (US GAAP)",
+        "verifier_ifrs": "Verifier agent (IFRS)",
+        "key_differences": "Key differences",
+        "conversion_impact": "Conversion impact",
+        "none_retrieved": "_(none retrieved — see verifier note below)_",
+        "no_current_summary": "_(no current treatment summary)_",
+        "no_gaap_retrieved": "_(no US GAAP standards retrieved)_",
+        "no_ifrs_retrieved": "_(no IFRS standards retrieved)_",
+        "see_summaries_above": "_See side-by-side summaries above._",
+        "source_label": "source",
+    },
+    "he": {
+        "draft_banner": "**טיוטה — דורש סקירת שותף**",
+        "title": "השוואת USGAAP <> IFRS",
+        "detected_framework": "תקן שזוהה",
+        "generated": "נוצר",
+        "confidence": "ביטחון הזיהוי",
+        "rationale": "נימוק",
+        "current_treatment": "טיפול נוכחי (מהמסמך שלך)",
+        "source_paragraphs_user": "פסקאות מקור מהמסמך שלך",
+        "us_gaap_treatment": "טיפול לפי US GAAP",
+        "source_paragraphs_gaap": "פסקאות מקור מתקני US GAAP",
+        "ifrs_treatment": "טיפול לפי IFRS",
+        "source_paragraphs_ifrs": "פסקאות מקור מתקני IFRS",
+        "verifier_us": "סוכן אימות (US GAAP)",
+        "verifier_ifrs": "סוכן אימות (IFRS)",
+        "key_differences": "הבדלים מרכזיים",
+        "conversion_impact": "השפעת ההמרה",
+        "none_retrieved": "_(לא אותרו — ראו הערת האימות בהמשך)_",
+        "no_current_summary": "_(אין סיכום של הטיפול הנוכחי)_",
+        "no_gaap_retrieved": "_(לא אותרו תקני US GAAP)_",
+        "no_ifrs_retrieved": "_(לא אותרו תקני IFRS)_",
+        "see_summaries_above": "_ראו את הסיכומים צד-לצד למעלה._",
+        "source_label": "מקור",
+    },
+}
+
+
+_TRANSLATE_PROMPT = """You are translating an accounting memo from English into Hebrew for a CPA partner. Translate accurately and naturally; preserve technical accounting terms (e.g. ASC 606, IFRS 15, EPS, deferred tax) but use Hebrew for everything else.
+
+Return STRICT JSON with the SAME keys as the input, each value translated. Do not add or drop keys. Do not include any prose outside the JSON.
+
+INPUT:
+{input_json}
+"""
+
+
+async def _translate_to_hebrew(items: dict[str, str]) -> dict[str, str]:
+    """Batched LLM translation of memo prose fields. Empty / None values
+    short-circuit so the LLM only sees real text. On any failure we
+    return the original English so the export still completes."""
+    nonempty = {k: v for k, v in items.items() if v and v.strip()}
+    if not nonempty:
+        return items
+    try:
+        from app.llm.client import get_llm
+        prompt = _TRANSLATE_PROMPT.format(input_json=json.dumps(nonempty, ensure_ascii=False))
+        # Long timeout — translation of a multi-issue memo is non-trivial.
+        response = await asyncio.wait_for(get_llm().complete(prompt), timeout=120.0)
+        text = (response.text or "").strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.lower().startswith("json\n"):
+                text = text[5:]
+        start, end = text.find("{"), text.rfind("}")
+        if start >= 0 and end > start:
+            text = text[start : end + 1]
+        translated = json.loads(text)
+        # Merge with the original so empty values stay empty.
+        out = dict(items)
+        for k, v in translated.items():
+            if isinstance(v, str) and k in out:
+                out[k] = v
+        return out
+    except Exception as exc:
+        logger.warning("memo translation failed (returning English): %r", exc)
+        return items
+
+
+async def _maybe_translate_issue(
+    i: ComparisonIssue, locale: str,
+) -> dict[str, str | None]:
+    """Return a dict of the issue's prose fields, translated to Hebrew when
+    locale=='he'. Verbatim quotes (current_user_cites, gaap_citations,
+    ifrs_citations) are NEVER translated — they stay in their source
+    language so citation integrity is preserved for the auditor.
+    """
+    fields: dict[str, str | None] = {
+        "current_summary": i.current_summary,
+        "gaap_summary": i.gaap_summary,
+        "ifrs_summary": i.ifrs_summary,
+        "differences": i.differences,
+        "conversion_impact": i.conversion_impact,
+        "gaap_verification": i.gaap_verification,
+        "ifrs_verification": i.ifrs_verification,
+    }
+    if locale != "he":
+        return fields
+    to_translate = {k: v for k, v in fields.items() if v}
+    translated = await _translate_to_hebrew({k: v for k, v in to_translate.items() if v})
+    for k, v in translated.items():
+        fields[k] = v
+    return fields
+
+
+def _format_issue_section(
+    i: ComparisonIssue,
+    prose: dict[str, str | None],
+    locale: str = "en",
+) -> str:
     """Render one issue as a self-contained markdown section with the
     EXACT source paragraphs (verbatim quotes) inline next to each side's
     implementation summary, plus the verifier agent's correctness report.
 
-    Layout:
-      ## #{seq} {topic}
-      ### Current treatment (from your document)
-      <current_summary>
-      #### Source paragraphs from your document
-      > [anchor] verbatim text
-      ### US GAAP treatment
-      <gaap_summary>
-      #### Source paragraphs from US GAAP standards
-      > **standard ¶para** — url
-      > "verbatim quote"
-      #### Verifier agent
-      <gaap_verification>
-      ### IFRS treatment
-      ... (same shape)
-      ### Key differences
-      ### Conversion impact
+    ``prose`` carries the (possibly translated) summary / verifier /
+    differences / conversion_impact text. Verbatim cited quotes come
+    straight from ``i.*_citations`` and are NEVER translated.
     """
+    s = _MEMO_STRINGS.get(locale, _MEMO_STRINGS["en"])
     parts: list[str] = []
     parts.append(f"## #{i.seq} {i.topic}\n")
 
     # --- Current treatment from the user's document ---
-    parts.append("### Current treatment (from your document)\n")
-    parts.append((i.current_summary or "_(no current treatment summary)_") + "\n")
+    parts.append(f"### {s['current_treatment']}\n")
+    parts.append((prose.get("current_summary") or s["no_current_summary"]) + "\n")
     if i.current_user_cites:
-        parts.append("#### Source paragraphs from your document\n")
+        parts.append(f"#### {s['source_paragraphs_user']}\n")
         for c in i.current_user_cites:
             anchor = c.get("anchor") or c.get("ref") or "?"
             quote = (c.get("quote") or "").strip()
@@ -519,39 +703,44 @@ def _format_issue_section(i: ComparisonIssue) -> str:
             parts.append("")  # blank line between cites
 
     # --- US GAAP side ---
-    parts.append("### US GAAP treatment\n")
-    parts.append((i.gaap_summary or "_(no US GAAP standards retrieved)_") + "\n")
-    parts.append("#### Source paragraphs from US GAAP standards\n")
-    parts.append(_format_inline_cites(i.gaap_citations))
-    if i.gaap_verification:
-        parts.append("#### Verifier agent (US GAAP)\n")
-        parts.append(i.gaap_verification + "\n")
+    parts.append(f"### {s['us_gaap_treatment']}\n")
+    parts.append((prose.get("gaap_summary") or s["no_gaap_retrieved"]) + "\n")
+    parts.append(f"#### {s['source_paragraphs_gaap']}\n")
+    parts.append(_format_inline_cites(i.gaap_citations, locale))
+    if prose.get("gaap_verification"):
+        parts.append(f"#### {s['verifier_us']}\n")
+        parts.append(prose["gaap_verification"] + "\n")
 
     # --- IFRS side ---
-    parts.append("### IFRS treatment\n")
-    parts.append((i.ifrs_summary or "_(no IFRS standards retrieved)_") + "\n")
-    parts.append("#### Source paragraphs from IFRS standards\n")
-    parts.append(_format_inline_cites(i.ifrs_citations))
-    if i.ifrs_verification:
-        parts.append("#### Verifier agent (IFRS)\n")
-        parts.append(i.ifrs_verification + "\n")
+    parts.append(f"### {s['ifrs_treatment']}\n")
+    parts.append((prose.get("ifrs_summary") or s["no_ifrs_retrieved"]) + "\n")
+    parts.append(f"#### {s['source_paragraphs_ifrs']}\n")
+    parts.append(_format_inline_cites(i.ifrs_citations, locale))
+    if prose.get("ifrs_verification"):
+        parts.append(f"#### {s['verifier_ifrs']}\n")
+        parts.append(prose["ifrs_verification"] + "\n")
 
     # --- Differences + conversion impact ---
-    parts.append("### Key differences\n")
-    parts.append((i.differences or "_See side-by-side summaries above._") + "\n")
-    if i.conversion_impact:
-        parts.append("### Conversion impact\n")
-        parts.append(i.conversion_impact + "\n")
+    parts.append(f"### {s['key_differences']}\n")
+    parts.append((prose.get("differences") or s["see_summaries_above"]) + "\n")
+    if prose.get("conversion_impact"):
+        parts.append(f"### {s['conversion_impact']}\n")
+        parts.append(prose["conversion_impact"] + "\n")
 
     return "\n".join(parts)
 
 
-def _format_inline_cites(cites: list[dict]) -> str:
+def _format_inline_cites(cites: list[dict], locale: str = "en") -> str:
     """Each cited paragraph is rendered as a labelled blockquote so it
     visually sits next to the summary it backs. Verbatim quotes are
-    preserved in full — no truncation."""
+    preserved in full — no truncation, no translation (citation integrity
+    requires the original source language).
+
+    Only the ``source:`` label is localized.
+    """
+    s = _MEMO_STRINGS.get(locale, _MEMO_STRINGS["en"])
     if not cites:
-        return "_(none retrieved — see verifier note below)_\n"
+        return s["none_retrieved"] + "\n"
     out: list[str] = []
     for c in cites:
         std = c.get("standard") or "(no standard)"
@@ -565,7 +754,7 @@ def _format_inline_cites(cites: list[dict]) -> str:
         if quote:
             out.append(f"> _\"{quote}\"_")
         if url:
-            out.append(f"> source: {url}")
+            out.append(f"> {s['source_label']}: {url}")
         out.append("")
     return "\n".join(out)
 
