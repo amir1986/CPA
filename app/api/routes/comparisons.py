@@ -432,58 +432,56 @@ async def export_memo(
     # summaries + verifier output + differences + conversion impact) in a
     # SINGLE batched LLM call. Verbatim quotes are excluded — they stay in
     # their source language so citation integrity is preserved.
+    #
+    # The entire translation step is wrapped: an unhandled exception here
+    # (e.g. LLM client init failing because OLLAMA_API_KEYS is missing, a
+    # broken httpx connection during gather, or any future code path that
+    # forgets to catch internally) would otherwise propagate to FastAPI as
+    # an opaque 500. We'd rather ship an English-fallback PDF than refuse
+    # to export — citation integrity already requires verbatim quotes stay
+    # in source language, so an all-English memo is a valid degradation.
+    PROSE_KEYS = (
+        "current_summary",
+        "gaap_summary",
+        "ifrs_summary",
+        "differences",
+        "conversion_impact",
+        "gaap_verification",
+        "ifrs_verification",
+    )
     rationale_text = run.rationale or ""
     per_issue_prose: list[dict[str, str | None]] = []
+    translated: dict[str, str] = {}
     if locale == "he":
         flat: dict[str, str] = {}
         if rationale_text.strip():
             flat["_run.rationale"] = rationale_text
         for i in issues:
-            for k in (
-                "current_summary",
-                "gaap_summary",
-                "ifrs_summary",
-                "differences",
-                "conversion_impact",
-                "gaap_verification",
-                "ifrs_verification",
-            ):
+            for k in PROSE_KEYS:
                 v = getattr(i, k, None)
                 if v and v.strip():
                     flat[f"{i.id}.{k}"] = v
-        translated = await _translate_batches_parallel(flat, batch_size=8)
+        try:
+            translated = await _translate_batches_parallel(flat, batch_size=8)
+        except Exception as exc:
+            # Don't 500 because translation glitched — ship the memo with
+            # English prose. Section headings + labels still come from the
+            # Hebrew _MEMO_STRINGS dict baked in below, so the export is
+            # visibly localized; only the LLM-generated paragraphs stay EN.
+            logger.warning(
+                "Hebrew memo translation failed; exporting with English prose: %r", exc
+            )
+            translated = dict(flat)
         rationale_text = translated.get("_run.rationale", rationale_text)
-        for i in issues:
-            per_issue_prose.append(
-                {
-                    k: translated.get(f"{i.id}.{k}", getattr(i, k))
-                    for k in (
-                        "current_summary",
-                        "gaap_summary",
-                        "ifrs_summary",
-                        "differences",
-                        "conversion_impact",
-                        "gaap_verification",
-                        "ifrs_verification",
-                    )
-                }
-            )
-    else:
-        for i in issues:
-            per_issue_prose.append(
-                {
-                    k: getattr(i, k)
-                    for k in (
-                        "current_summary",
-                        "gaap_summary",
-                        "ifrs_summary",
-                        "differences",
-                        "conversion_impact",
-                        "gaap_verification",
-                        "ifrs_verification",
-                    )
-                }
-            )
+
+    for i in issues:
+        per_issue_prose.append(
+            {
+                k: (translated.get(f"{i.id}.{k}", getattr(i, k)) if locale == "he"
+                    else getattr(i, k))
+                for k in PROSE_KEYS
+            }
+        )
 
     sections: list[str] = []
     sections.append(
@@ -657,6 +655,11 @@ async def _translate_batches_parallel(
 
     Translation failures degrade per-batch: failed batches just return
     English for their keys and the rest of the memo still ships in Hebrew.
+
+    ``return_exceptions=True`` keeps one batch's failure (rotator exhausted,
+    httpx connection broken mid-flight, JSON garbage that escapes the
+    inner-most try) from cancelling the rest of the gather and surfacing
+    as a 500 to the user.
     """
     if not flat:
         return flat
@@ -666,10 +669,13 @@ async def _translate_batches_parallel(
     ]
     results = await asyncio.gather(
         *[_translate_to_hebrew(b) for b in batches],
-        return_exceptions=False,
+        return_exceptions=True,
     )
     out: dict[str, str] = dict(flat)
-    for batch_out in results:
+    for batch, batch_out in zip(batches, results, strict=True):
+        if isinstance(batch_out, BaseException):
+            logger.warning("translation batch failed (keeping English): %r", batch_out)
+            continue
         for k, v in batch_out.items():
             out[k] = v
     return out
