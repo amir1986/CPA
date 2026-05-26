@@ -489,12 +489,29 @@ async def _verify_both_sides(
     ifrs_summary: str | None,
     ifrs_citations: list,
 ) -> tuple[str | None, str | None]:
-    """Run the verifier in parallel for both sides — one LLM call per side."""
+    """Run the verifier in parallel for both sides — one LLM call per side.
+
+    ``return_exceptions=True`` keeps one side's failure (rotator exhausted,
+    Ollama 5xx, JSON garbage that escapes ``_verify_one_side``'s inner-most
+    try) from cancelling the other side via gather's fail-fast default.
+    Either side's exception is coerced to a short "(verifier failed)"
+    placeholder so the orchestrator still gets a usable string pair.
+    """
     llm = get_llm()
-    return await asyncio.gather(
+    results = await asyncio.gather(
         _verify_one_side("US", gaap_summary, gaap_citations, llm),
         _verify_one_side("IFRS", ifrs_summary, ifrs_citations, llm),
+        return_exceptions=True,
     )
+
+    def _coerce(side: str, r: object) -> str | None:
+        if isinstance(r, BaseException):
+            logger.warning("verifier agent failed for %s: %r", side, r)
+            return f"(verifier agent failed: {r})"
+        return r  # type: ignore[return-value]
+
+    gaap_v, ifrs_v = results
+    return _coerce("US", gaap_v), _coerce("IFRS", ifrs_v)
 
 
 async def run_orchestrator(run_id: uuid.UUID) -> None:
@@ -566,7 +583,14 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
         fw = parsed.get("detected_framework")
         run.detected_framework = Framework(fw) if fw in ("US", "IFRS") else None
         confidence = parsed.get("confidence")
-        run.confidence = float(confidence) if isinstance(confidence, (int, float)) else None
+        # `isinstance(True, (int, float))` is True in Python — reject bools
+        # explicitly so an LLM hallucinating `"confidence": true` doesn't
+        # get coerced into 1.0 (100% confidence). CLAUDE.md §3 flags this.
+        run.confidence = (
+            float(confidence)
+            if not isinstance(confidence, bool) and isinstance(confidence, (int, float))
+            else None
+        )
         run.rationale = parsed.get("rationale")
 
         issues_payload = parsed.get("issues") or []

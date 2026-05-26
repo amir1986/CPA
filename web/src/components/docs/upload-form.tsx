@@ -4,10 +4,13 @@ import { useRef, useState } from "react";
 import { Loader2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
 
 const KINDS = ["trial_balance", "gl", "bank", "invoice", "financial_statements", "contract", "policy", "other"] as const;
 
 export function UploadForm({ engagementId }: { engagementId: string }) {
+  const locale = useLocale();
   const [kind, setKind] = useState<(typeof KINDS)[number]>("trial_balance");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -19,14 +22,14 @@ export function UploadForm({ engagementId }: { engagementId: string }) {
     const form = new FormData();
     form.append("file", file, file.name);
     form.append("kind", kind);
-    const res = await fetch(`/api/cpa/engagements/${engagementId}/files`, {
+    const res = await fetch(`/api/engagements/${engagementId}/files`, {
       method: "POST",
       body: form,
     });
     setBusy(false);
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { detail?: string };
-      setError(body.detail ?? "upload failed");
+      setError(body.detail ?? t("documents.upload_failed", locale));
       return;
     }
     // Reload server-side data.
@@ -45,9 +48,9 @@ export function UploadForm({ engagementId }: { engagementId: string }) {
     >
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h3 className="text-sm font-medium">Drop a file or click below</h3>
+          <h3 className="text-sm font-medium">{t("documents.drop_title", locale)}</h3>
           <p className="mt-1 text-xs text-fg-muted">
-            xlsx, csv, pdf — max 200 MB. Kind: <code className="font-mono">{kind}</code>.
+            {t("documents.drop_hint", locale)} <code className="font-mono">{kind}</code>.
           </p>
         </div>
         <select
@@ -72,7 +75,7 @@ export function UploadForm({ engagementId }: { engagementId: string }) {
         />
         <Button onClick={() => inputRef.current?.click()} disabled={busy}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          {busy ? "Uploading…" : "Choose file"}
+          {busy ? t("documents.uploading", locale) : t("documents.choose_file", locale)}
         </Button>
         {error && <span className="text-sm text-danger">{error}</span>}
       </div>

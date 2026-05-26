@@ -511,7 +511,7 @@ async def export_memo(
             # goes into the PDF. Timeout is generous (5 minutes) so even a
             # large multi-issue Hebrew export has room.
             pdf_bytes = await asyncio.wait_for(
-                asyncio.to_thread(render_pdf_bytes, full),
+                asyncio.to_thread(render_pdf_bytes, full, locale=locale),
                 timeout=300.0,
             )
         except RuntimeError as exc:
@@ -633,10 +633,14 @@ async def _translate_to_hebrew(items: dict[str, str]) -> dict[str, str]:
         if start >= 0 and end > start:
             text = text[start : end + 1]
         translated = json.loads(text)
-        # Merge with the original so empty values stay empty.
+        # Merge with the original so empty values stay empty. Skip empty /
+        # whitespace-only translations — an LLM returning `""` for a field
+        # would otherwise wipe the English source and downstream truthy
+        # checks (`prose.get(key) or s["no_…_retrieved"]`) flip the memo to
+        # the "no retrieval" placeholder for a field we actually had.
         out = dict(items)
         for k, v in translated.items():
-            if isinstance(v, str) and k in out:
+            if isinstance(v, str) and v.strip() and k in out:
                 out[k] = v
         return out
     except Exception as exc:

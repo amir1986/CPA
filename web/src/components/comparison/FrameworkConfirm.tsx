@@ -34,7 +34,7 @@ export function FrameworkConfirm({ runId, detected, current, confidence, rationa
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { detail?: string };
-        setError(body.detail ?? "failed to save");
+        setError(body.detail ?? tr("errors.save_failed"));
         return;
       }
       router.refresh();

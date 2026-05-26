@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
+
 export type ChipCitation = {
   standard?: string | null;
   paragraph?: string | null;
@@ -29,6 +32,7 @@ export function CiteChip({ citation }: { citation: ChipCitation }) {
 }
 
 function CiteDrawer({ citation, onClose }: { citation: ChipCitation; onClose: () => void }) {
+  const locale = useLocale();
   return (
     <div className="fixed inset-0 z-40 flex items-stretch bg-bg-overlay" onClick={onClose}>
       <div
@@ -36,7 +40,7 @@ function CiteDrawer({ citation, onClose }: { citation: ChipCitation; onClose: ()
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold">Citation</h2>
+          <h2 className="text-base font-semibold">{t("citations.title", locale)}</h2>
           <button onClick={onClose} className="text-fg-muted hover:text-fg">
             ×
           </button>
@@ -44,19 +48,19 @@ function CiteDrawer({ citation, onClose }: { citation: ChipCitation; onClose: ()
         <dl className="space-y-3 text-sm">
           {citation.standard && (
             <div>
-              <dt className="text-xs uppercase text-fg-subtle">Standard</dt>
+              <dt className="text-xs uppercase text-fg-subtle">{t("citations.standard", locale)}</dt>
               <dd className="font-mono">{citation.standard}</dd>
             </div>
           )}
           {citation.paragraph && (
             <div>
-              <dt className="text-xs uppercase text-fg-subtle">Paragraph</dt>
+              <dt className="text-xs uppercase text-fg-subtle">{t("citations.paragraph", locale)}</dt>
               <dd className="font-mono">{citation.paragraph}</dd>
             </div>
           )}
           {citation.url && (
             <div>
-              <dt className="text-xs uppercase text-fg-subtle">URL</dt>
+              <dt className="text-xs uppercase text-fg-subtle">{t("citations.url", locale)}</dt>
               <dd>
                 <a href={citation.url} target="_blank" rel="noreferrer" className="text-brand underline">
                   {citation.url}
@@ -65,7 +69,7 @@ function CiteDrawer({ citation, onClose }: { citation: ChipCitation; onClose: ()
             </div>
           )}
           <div>
-            <dt className="text-xs uppercase text-fg-subtle">Quote</dt>
+            <dt className="text-xs uppercase text-fg-subtle">{t("citations.quote", locale)}</dt>
             <dd className="rounded-md bg-bg-elev p-3 text-sm">{citation.quote}</dd>
           </div>
         </dl>

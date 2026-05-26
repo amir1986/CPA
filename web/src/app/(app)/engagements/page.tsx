@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api/client";
 import type { Client, Engagement } from "@/lib/api/types";
+import { t } from "@/lib/i18n";
+import { getLocale } from "@/lib/i18n/server";
 
 async function createEngagement(formData: FormData) {
   "use server";
@@ -29,6 +31,8 @@ async function createEngagement(formData: FormData) {
 }
 
 export default async function EngagementsPage() {
+  const locale = await getLocale();
+  const tr = (k: string, v?: Record<string, string | number>) => t(k, locale, v);
   const engagements = await apiFetch<Engagement[]>("/engagements");
   const clients = await apiFetch<Client[]>("/clients");
   const clientName = (id: string) => clients.find((c) => c.id === id)?.name ?? id;
@@ -37,43 +41,43 @@ export default async function EngagementsPage() {
     <div className="mx-auto max-w-4xl">
       <header className="mb-6 flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Engagements</h1>
+          <h1 className="text-2xl font-semibold">{tr("engagements.title")}</h1>
           <p className="mt-1 text-sm text-fg-muted">
-            One workspace per client engagement — audit, review, compilation, tax, or bookkeeping.
+            {tr("engagements.subtitle")}
           </p>
         </div>
       </header>
 
       <section className="mb-6 rounded-lg border border-border bg-bg p-5">
-        <h2 className="mb-3 text-sm font-medium">Create engagement</h2>
+        <h2 className="mb-3 text-sm font-medium">{tr("engagements.create_title")}</h2>
         <form action={createEngagement} className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <input
             name="client_name"
-            placeholder="Client name"
+            placeholder={tr("engagements.client_name")}
             required
             className="rounded-md border border-border bg-bg-elev px-3 py-2 text-sm"
           />
           <input
             name="name"
-            placeholder="Engagement name"
+            placeholder={tr("engagements.engagement_name")}
             required
             className="rounded-md border border-border bg-bg-elev px-3 py-2 text-sm"
           />
           <select name="type" defaultValue="audit" className="rounded-md border border-border bg-bg-elev px-3 py-2 text-sm">
-            <option value="audit">Audit</option>
-            <option value="review">Review</option>
-            <option value="compilation">Compilation</option>
-            <option value="tax">Tax</option>
-            <option value="bookkeeping">Bookkeeping</option>
+            <option value="audit">{tr("engagements.type_audit")}</option>
+            <option value="review">{tr("engagements.type_review")}</option>
+            <option value="compilation">{tr("engagements.type_compilation")}</option>
+            <option value="tax">{tr("engagements.type_tax")}</option>
+            <option value="bookkeeping">{tr("engagements.type_bookkeeping")}</option>
           </select>
-          <Button type="submit">Create</Button>
+          <Button type="submit">{tr("engagements.create")}</Button>
         </form>
       </section>
 
       {engagements.length === 0 ? (
         <div className="rounded-lg border border-border bg-bg p-10 text-center">
-          <p className="text-base font-medium">No engagements yet</p>
-          <p className="mt-1 text-sm text-fg-muted">Create your first engagement above.</p>
+          <p className="text-base font-medium">{tr("engagements.no_engagements_title")}</p>
+          <p className="mt-1 text-sm text-fg-muted">{tr("engagements.no_engagements_hint")}</p>
         </div>
       ) : (
         <ul className="divide-y divide-border rounded-lg border border-border bg-bg">

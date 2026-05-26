@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { ThemeProvider } from "next-themes";
 
 import "./globals.css";
+import { t } from "@/lib/i18n";
 
 export const metadata: Metadata = {
   title: "CPA AI Assistant",
@@ -26,7 +27,7 @@ export default async function RootLayout({
     <html lang={locale} dir={dir} suppressHydrationWarning>
       <body>
         <a href="#main" className="skip-to-content">
-          Skip to content
+          {t("nav.skip_to_content", locale)}
         </a>
         <ThemeProvider
           attribute="data-theme"

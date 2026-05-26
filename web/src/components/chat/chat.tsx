@@ -5,6 +5,8 @@ import { Loader2, Send } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { Citation } from "@/lib/api/types";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
 
 type Message = {
   id: string;
@@ -57,6 +59,7 @@ async function* parseSSE(res: Response): AsyncGenerator<StreamEvent> {
 }
 
 export function Chat() {
+  const locale = useLocale();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -103,22 +106,24 @@ export function Chat() {
     } catch {
       setMessages((ms) =>
         ms.map((m) =>
-          m.id === assistantMsg.id ? { ...m, text: "[error contacting backend]", refused: true } : m,
+          m.id === assistantMsg.id
+            ? { ...m, text: t("chat.error_contacting_backend", locale), refused: true }
+            : m,
         ),
       );
     } finally {
       setBusy(false);
     }
-  }, [busy, input]);
+  }, [busy, input, locale]);
 
   return (
     <div className="flex h-[calc(100vh-7rem)] flex-col">
       <div className="flex-1 overflow-y-auto pr-3" dir="ltr">
         {messages.length === 0 && (
           <div className="mx-auto mt-12 max-w-xl rounded-lg border border-dashed border-border bg-bg p-8 text-center">
-            <h2 className="text-base font-medium">Ask a question</h2>
+            <h2 className="text-base font-medium">{t("chat.ask_title", locale)}</h2>
             <p className="mt-2 text-sm text-fg-muted">
-              Try: <em>“When is revenue recognized under ASC 606?”</em>
+              {t("chat.try_example", locale)} <em>“{t("chat.example_question", locale)}”</em>
             </p>
           </div>
         )}
@@ -134,7 +139,7 @@ export function Chat() {
             >
               {m.role === "assistant" && m.refused && (
                 <span className="mb-2 inline-block rounded-pill bg-refusal/10 px-2 py-0.5 text-xs font-medium text-refusal">
-                  refused — out of corpus
+                  {t("chat.refused_out_of_corpus", locale)}
                 </span>
               )}
               <p className="whitespace-pre-wrap">{m.text || (m.role === "assistant" && busy ? "…" : "")}</p>
@@ -167,7 +172,7 @@ export function Chat() {
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about accounting, auditing, or tax standards…"
+          placeholder={t("chat.placeholder", locale)}
           rows={2}
           className="flex-1 resize-none rounded-md border border-border bg-bg px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           onKeyDown={(e) => {
@@ -188,6 +193,7 @@ export function Chat() {
 }
 
 function CitationDrawer({ citation, onClose }: { citation: Citation; onClose: () => void }) {
+  const locale = useLocale();
   return (
     <div className="fixed inset-0 z-40 flex items-stretch bg-bg-overlay" onClick={onClose}>
       <div
@@ -195,24 +201,30 @@ function CitationDrawer({ citation, onClose }: { citation: Citation; onClose: ()
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold">Citation</h2>
-          <button onClick={onClose} className="text-fg-muted hover:text-fg">×</button>
+          <h2 className="text-base font-semibold">{t("citations.title", locale)}</h2>
+          <button
+            onClick={onClose}
+            aria-label={t("common.close", locale)}
+            className="text-fg-muted hover:text-fg"
+          >
+            ×
+          </button>
         </div>
         <dl className="space-y-2 text-sm">
           {citation.standard && (
             <div>
-              <dt className="text-xs uppercase text-fg-subtle">Standard</dt>
+              <dt className="text-xs uppercase text-fg-subtle">{t("citations.standard", locale)}</dt>
               <dd className="font-mono">{citation.standard}</dd>
             </div>
           )}
           {citation.paragraph && (
             <div>
-              <dt className="text-xs uppercase text-fg-subtle">Paragraph</dt>
+              <dt className="text-xs uppercase text-fg-subtle">{t("citations.paragraph", locale)}</dt>
               <dd className="font-mono">{citation.paragraph}</dd>
             </div>
           )}
           <div>
-            <dt className="text-xs uppercase text-fg-subtle">URL</dt>
+            <dt className="text-xs uppercase text-fg-subtle">{t("citations.url", locale)}</dt>
             <dd>
               <a href={citation.url} target="_blank" rel="noreferrer" className="text-brand underline">
                 {citation.url}
@@ -220,7 +232,7 @@ function CitationDrawer({ citation, onClose }: { citation: Citation; onClose: ()
             </dd>
           </div>
           <div>
-            <dt className="text-xs uppercase text-fg-subtle">Quote</dt>
+            <dt className="text-xs uppercase text-fg-subtle">{t("citations.quote", locale)}</dt>
             <dd className="rounded-md bg-bg-elev p-3 text-sm">{citation.quote}</dd>
           </div>
         </dl>

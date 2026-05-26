@@ -50,12 +50,23 @@ export function LocaleSelect({ current }: { current: string }) {
           const body = (await res.json().catch(() => ({}))) as { detail?: string };
           setError(
             body.detail
-              ? `${tr("settings.saved")} (locally — server: ${body.detail})`
-              : `${tr("settings.saved")} (locally — server returned ${res.status})`,
+              ? t("errors.saved_locally_server", ctxLocale, {
+                  label: tr("settings.saved"),
+                  detail: body.detail,
+                })
+              : t("errors.saved_locally_status", ctxLocale, {
+                  label: tr("settings.saved"),
+                  status: res.status,
+                }),
           );
         }
       } catch (e) {
-        setError(`${tr("settings.saved")} (locally — ${(e as Error).message})`);
+        setError(
+          t("errors.saved_locally_error", ctxLocale, {
+            label: tr("settings.saved"),
+            error: (e as Error).message,
+          }),
+        );
       }
       setSaved(true);
       // 3. Re-render the tree so server components pick up the new locale.

@@ -25,7 +25,10 @@ export function StandardsRefresh() {
   const [pending, startTransition] = useTransition();
 
   // Initial load + 5s poll while any run is in 'running' state so the UI
-  // reflects the orchestrator progress without a manual refresh.
+  // reflects the orchestrator progress without a manual refresh. Calling
+  // ``t`` directly (instead of the captured ``tr`` closure) keeps this
+  // effect's deps stable AND picks up the latest locale on every render
+  // without re-triggering the polling loop.
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -35,7 +38,7 @@ export function StandardsRefresh() {
         const res = await fetch("/api/admin/standards/runs");
         if (cancelled) return;
         if (!res.ok) {
-          setError(`load failed (${res.status})`);
+          setError(t("errors.load_failed_status", locale, { status: res.status }));
           return;
         }
         const data = (await res.json()) as IngestRun[];
@@ -54,7 +57,7 @@ export function StandardsRefresh() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [locale]);
 
   function refresh() {
     setError(null);
@@ -66,7 +69,7 @@ export function StandardsRefresh() {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { detail?: string };
-        setError(body.detail ?? `refresh failed (${res.status})`);
+        setError(body.detail ?? tr("errors.refresh_failed_status", { status: res.status }));
         return;
       }
       // Re-poll the runs list so the new 'running' rows appear immediately.

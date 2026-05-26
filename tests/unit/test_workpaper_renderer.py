@@ -42,7 +42,7 @@ def test_render_pdf_bytes_returns_stub_when_both_backends_fail(monkeypatch) -> N
             raise OSError("native renderer missing")
 
     class BrokenFPDF:
-        def __init__(self) -> None:
+        def __init__(self, *args, **kwargs) -> None:
             raise RuntimeError("fpdf2 catastrophic init failure")
 
     monkeypatch.setitem(sys.modules, "weasyprint", types.SimpleNamespace(HTML=BrokenHTML))
@@ -76,16 +76,22 @@ def test_render_pdf_bytes_rejects_non_pdf_weasyprint_output(monkeypatch) -> None
 def test_render_pdf_bytes_continues_after_single_bad_line(monkeypatch) -> None:
     """A single line that raises during fpdf2 rendering must not nuke the
     whole memo — the rest of the lines should still make it onto the page.
+
+    The renderer's per-line ``_render_md_line`` call is wrapped in a
+    try/except inside ``_fpdf_render``, so a single exploding line gets
+    skipped while the loop keeps walking. The monkeypatched stub accepts
+    ``**kwargs`` because the helper signature is intentionally a moving
+    target (the document-direction context lives on the pdf instance).
     """
 
     real_render_md_line = renderer._render_md_line
     calls: list[str] = []
 
-    def maybe_explode(pdf, line: str, epw: float, font_name: str) -> None:
+    def maybe_explode(pdf, line: str, epw: float, font_name: str, **kwargs) -> None:
         calls.append(line)
         if "EXPLODE" in line:
             raise RuntimeError("simulated bad glyph")
-        real_render_md_line(pdf, line, epw, font_name)
+        real_render_md_line(pdf, line, epw, font_name, **kwargs)
 
     monkeypatch.setattr(renderer, "_render_md_line", maybe_explode)
     # Also force weasyprint to fail so we land on the fpdf2 path.

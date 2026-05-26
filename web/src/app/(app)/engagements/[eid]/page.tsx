@@ -2,10 +2,14 @@ import Link from "next/link";
 
 import { apiFetch } from "@/lib/api/client";
 import type { AgentRun, Engagement, FileOut } from "@/lib/api/types";
+import { t } from "@/lib/i18n";
+import { getLocale } from "@/lib/i18n/server";
 
 type Props = { params: Promise<{ eid: string }> };
 
 export default async function EngagementDashboard({ params }: Props) {
+  const locale = await getLocale();
+  const tr = (k: string, v?: Record<string, string | number>) => t(k, locale, v);
   const { eid } = await params;
   const [eng, files, runs] = await Promise.all([
     apiFetch<Engagement>(`/engagements/${eid}`),
@@ -28,21 +32,21 @@ export default async function EngagementDashboard({ params }: Props) {
       </header>
 
       <section className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Kpi label="Materiality" value={eng.materiality?.toLocaleString() ?? "—"} />
-        <Kpi label="Performance materiality" value={eng.performance_materiality?.toLocaleString() ?? "—"} />
-        <Kpi label="Files uploaded" value={files.total.toString()} />
+        <Kpi label={tr("engagements.materiality")} value={eng.materiality?.toLocaleString() ?? "—"} />
+        <Kpi label={tr("engagements.performance_materiality")} value={eng.performance_materiality?.toLocaleString() ?? "—"} />
+        <Kpi label={tr("engagements.files_uploaded")} value={files.total.toString()} />
       </section>
 
       <section className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-3">
-        <QuickAction href={`/engagements/${eid}/chat`} title="Ask a question" desc="Cited Q&A across standards" />
-        <QuickAction href={`/engagements/${eid}/documents`} title="Upload TB / GL / bank" desc="Drop files, see parse status" />
-        <QuickAction href={`/engagements/${eid}/audit/samples`} title="Draw a sample" desc="Reproducible from seed" />
+        <QuickAction href={`/engagements/${eid}/chat`} title={tr("engagements.ask_question")} desc={tr("engagements.ask_question_desc")} />
+        <QuickAction href={`/engagements/${eid}/documents`} title={tr("engagements.upload_docs")} desc={tr("engagements.upload_docs_desc")} />
+        <QuickAction href={`/engagements/${eid}/audit/samples`} title={tr("engagements.draw_sample")} desc={tr("engagements.draw_sample_desc")} />
       </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Card title="Recent files">
+        <Card title={tr("engagements.recent_files")}>
           {files.items.length === 0 ? (
-            <Empty msg="No files yet." />
+            <Empty msg={tr("engagements.no_files")} />
           ) : (
             <ul className="divide-y divide-border">
               {files.items.slice(0, 6).map((f) => (
@@ -54,9 +58,9 @@ export default async function EngagementDashboard({ params }: Props) {
             </ul>
           )}
         </Card>
-        <Card title="Recent agent runs">
+        <Card title={tr("engagements.recent_agent_runs")}>
           {runs.length === 0 ? (
-            <Empty msg="No agent runs yet." />
+            <Empty msg={tr("engagements.no_agent_runs")} />
           ) : (
             <ul className="divide-y divide-border">
               {runs.map((r) => (
@@ -64,7 +68,11 @@ export default async function EngagementDashboard({ params }: Props) {
                   <Link href={`/engagements/${eid}/traces/${r.id}`} className="block text-sm hover:underline">
                     {r.request.slice(0, 80)}
                   </Link>
-                  <div className="text-xs text-fg-muted">{r.tool_calls.length} tool calls</div>
+                  <div className="text-xs text-fg-muted">
+                    {tr(r.tool_calls.length === 1 ? "common.tool_call_count_one" : "common.tool_call_count_many", {
+                      n: r.tool_calls.length,
+                    })}
+                  </div>
                 </li>
               ))}
             </ul>
