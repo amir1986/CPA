@@ -451,7 +451,7 @@ async def export_memo(
                 v = getattr(i, k, None)
                 if v and v.strip():
                     flat[f"{i.id}.{k}"] = v
-        translated = await _translate_to_hebrew(flat)
+        translated = await _translate_batches_parallel(flat, batch_size=8)
         rationale_text = translated.get("_run.rationale", rationale_text)
         for i in issues:
             per_issue_prose.append(
@@ -625,7 +625,7 @@ async def _translate_to_hebrew(items: dict[str, str]) -> dict[str, str]:
         from app.llm.client import get_llm
         prompt = _TRANSLATE_PROMPT.format(input_json=json.dumps(nonempty, ensure_ascii=False))
         # Long timeout — translation of a multi-issue memo is non-trivial.
-        response = await asyncio.wait_for(get_llm().complete(prompt), timeout=120.0)
+        response = await asyncio.wait_for(get_llm().complete(prompt), timeout=60.0)
         text = (response.text or "").strip()
         if text.startswith("```"):
             text = text.strip("`")
@@ -644,6 +644,35 @@ async def _translate_to_hebrew(items: dict[str, str]) -> dict[str, str]:
     except Exception as exc:
         logger.warning("memo translation failed (returning English): %r", exc)
         return items
+
+
+async def _translate_batches_parallel(
+    flat: dict[str, str], batch_size: int = 8,
+) -> dict[str, str]:
+    """Split a flat dict of strings into small batches and translate them
+    in parallel. Each batch is a separate LLM call (~5-15 s each) — total
+    wall time stays well under the 100 s Cloudflare edge timeout even on
+    a multi-issue memo. Single 30-key batch was timing the edge out (the
+    api itself completed in 116 s, but the proxy gave up).
+
+    Translation failures degrade per-batch: failed batches just return
+    English for their keys and the rest of the memo still ships in Hebrew.
+    """
+    if not flat:
+        return flat
+    items = list(flat.items())
+    batches: list[dict[str, str]] = [
+        dict(items[i : i + batch_size]) for i in range(0, len(items), batch_size)
+    ]
+    results = await asyncio.gather(
+        *[_translate_to_hebrew(b) for b in batches],
+        return_exceptions=False,
+    )
+    out: dict[str, str] = dict(flat)
+    for batch_out in results:
+        for k, v in batch_out.items():
+            out[k] = v
+    return out
 
 
 async def _maybe_translate_issue(
