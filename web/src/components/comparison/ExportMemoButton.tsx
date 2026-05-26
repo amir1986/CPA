@@ -9,7 +9,7 @@ import { useLocale } from "@/lib/i18n/client";
 
 export function ExportMemoButton({ runId }: { runId: string }) {
   const locale = useLocale();
-  const tr = (k: string) => t(k, locale);
+  const tr = (k: string, v?: Record<string, string | number>) => t(k, locale, v);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,7 +27,7 @@ export function ExportMemoButton({ runId }: { runId: string }) {
     setBusy(false);
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { detail?: string };
-      setError(body.detail ?? `export failed (${res.status})`);
+      setError(body.detail ?? tr("errors.export_failed_status", { status: res.status }));
       return;
     }
     const blob = await res.blob();

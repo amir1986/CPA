@@ -22,7 +22,7 @@ export function UploadForm({ engagementId }: { engagementId: string }) {
     const form = new FormData();
     form.append("file", file, file.name);
     form.append("kind", kind);
-    const res = await fetch(`/api/cpa/engagements/${engagementId}/files`, {
+    const res = await fetch(`/api/engagements/${engagementId}/files`, {
       method: "POST",
       body: form,
     });

@@ -111,7 +111,7 @@ export function KnowledgeGraph({ initial }: { initial: Graph }) {
         const params = new URLSearchParams();
         jurisdictions.forEach((j) => params.append("jurisdiction", j));
         corpusTypes.forEach((c) => params.append("corpus_type", c));
-        const res = await fetch(`/api/cpa/knowledge/graph?${params.toString()}`, {
+        const res = await fetch(`/api/knowledge/graph?${params.toString()}`, {
           signal: ctl.signal,
         });
         if (res.ok) {

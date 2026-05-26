@@ -22,7 +22,7 @@ export function UploadDropzone() {
   async function submit(files: FileList) {
     if (!files.length) return;
     if (files.length > MAX_FILES) {
-      setError(`max ${MAX_FILES} files per run`);
+      setError(tr("errors.max_files_per_run", { n: MAX_FILES }));
       return;
     }
     setBusy(true);
@@ -36,7 +36,7 @@ export function UploadDropzone() {
     setBusy(false);
     if (!res.ok) {
       const body = (await res.json().catch(() => ({}))) as { detail?: string };
-      setError(body.detail ?? `upload failed (${res.status})`);
+      setError(body.detail ?? tr("errors.upload_failed_status", { status: res.status }));
       return;
     }
     const json = (await res.json()) as { id: string };

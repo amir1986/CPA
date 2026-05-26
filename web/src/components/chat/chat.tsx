@@ -202,7 +202,13 @@ function CitationDrawer({ citation, onClose }: { citation: Citation; onClose: ()
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold">{t("citations.title", locale)}</h2>
-          <button onClick={onClose} className="text-fg-muted hover:text-fg">×</button>
+          <button
+            onClick={onClose}
+            aria-label={t("common.close", locale)}
+            className="text-fg-muted hover:text-fg"
+          >
+            ×
+          </button>
         </div>
         <dl className="space-y-2 text-sm">
           {citation.standard && (
