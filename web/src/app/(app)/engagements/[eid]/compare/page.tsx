@@ -1,20 +1,24 @@
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api/client";
 import type { QueryOut } from "@/lib/api/types";
+import { t } from "@/lib/i18n";
+import { getLocale } from "@/lib/i18n/server";
 
 type Props = { params: Promise<{ eid: string }>; searchParams: Promise<{ topic?: string }> };
 
 const TOPICS = [
-  "Revenue recognition",
-  "Leases",
-  "Inventory",
-  "Intangible assets",
-  "Impairment",
-  "Financial instruments",
-  "Income taxes",
-];
+  ["Revenue recognition", "compare.revenue_recognition"],
+  ["Leases", "compare.leases"],
+  ["Inventory", "compare.inventory"],
+  ["Intangible assets", "compare.intangible_assets"],
+  ["Impairment", "compare.impairment"],
+  ["Financial instruments", "compare.financial_instruments"],
+  ["Income taxes", "compare.income_taxes"],
+] as const;
 
 export default async function ComparePage({ params, searchParams }: Props) {
+  const locale = await getLocale();
+  const tr = (k: string, v?: Record<string, string | number>) => t(k, locale, v);
   await params;
   const sp = await searchParams;
   const topic = sp.topic ?? "";
@@ -42,44 +46,42 @@ export default async function ComparePage({ params, searchParams }: Props) {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <h1 className="mb-1 text-xl font-semibold">GAAP ↔ IFRS comparison</h1>
-      <p className="mb-4 text-sm text-fg-muted">
-        Picks a topic and runs two parallel /query calls — one US GAAP, one IFRS.
-      </p>
+      <h1 className="mb-1 text-xl font-semibold">{tr("compare.title")}</h1>
+      <p className="mb-4 text-sm text-fg-muted">{tr("compare.subtitle")}</p>
       <form className="mb-6 flex flex-wrap items-center gap-2">
-        {TOPICS.map((t) => (
+        {TOPICS.map(([value, labelKey]) => (
           <Button
-            key={t}
-            variant={topic === t ? "default" : "outline"}
+            key={value}
+            variant={topic === value ? "default" : "outline"}
             size="sm"
             type="submit"
             name="topic"
-            value={t}
+            value={value}
             formMethod="get"
           >
-            {t}
+            {tr(labelKey)}
           </Button>
         ))}
       </form>
 
       {topic && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Pane title="US GAAP" data={gaap} />
-          <Pane title="IFRS" data={ifrs} />
+          <Pane title="US GAAP" data={gaap} tr={tr} />
+          <Pane title="IFRS" data={ifrs} tr={tr} />
         </div>
       )}
     </div>
   );
 }
 
-function Pane({ title, data }: { title: string; data: QueryOut | null }) {
+function Pane({ title, data, tr }: { title: string; data: QueryOut | null; tr: (k: string, v?: Record<string, string | number>) => string }) {
   return (
     <section className="rounded-lg border border-border bg-bg p-4">
       <h2 className="mb-2 text-sm font-medium">{title}</h2>
-      {!data && <p className="text-sm text-fg-muted">No response.</p>}
+      {!data && <p className="text-sm text-fg-muted">{tr("compare.no_response")}</p>}
       {data?.refused && (
         <p className="rounded-md border border-warning bg-warning/5 px-3 py-2 text-sm text-warning">
-          Out of corpus for {title}.
+          {tr("compare.out_of_corpus", { title })}
         </p>
       )}
       {data && !data.refused && (

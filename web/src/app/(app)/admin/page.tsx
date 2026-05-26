@@ -1,7 +1,11 @@
 import { apiFetch, ApiError } from "@/lib/api/client";
 import type { RotatorStatus } from "@/lib/api/types";
+import { t } from "@/lib/i18n";
+import { getLocale } from "@/lib/i18n/server";
 
 export default async function AdminPage() {
+  const locale = await getLocale();
+  const tr = (k: string) => t(k, locale);
   let rotator: RotatorStatus | null = null;
   let forbidden = false;
   try {
@@ -14,34 +18,34 @@ export default async function AdminPage() {
   if (forbidden) {
     return (
       <div className="mx-auto max-w-3xl rounded-lg border border-danger bg-danger/5 p-6">
-        <h1 className="text-lg font-semibold">Admin only</h1>
-        <p className="mt-1 text-sm text-fg-muted">You need the admin role to view this page.</p>
+        <h1 className="text-lg font-semibold">{tr("admin.forbidden_title")}</h1>
+        <p className="mt-1 text-sm text-fg-muted">{tr("admin.forbidden_hint")}</p>
       </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-4xl">
-      <h1 className="mb-1 text-xl font-semibold">Admin</h1>
+      <h1 className="mb-1 text-xl font-semibold">{tr("admin.title")}</h1>
       <p className="mb-4 text-sm text-fg-muted">
-        Backend: <code className="font-mono">{rotator?.backend ?? "unknown"}</code>
+        {tr("common.backend")}: <code className="font-mono">{rotator?.backend ?? tr("common.unknown")}</code>
       </p>
 
-      <h2 className="mb-2 text-sm font-medium">Key rotator</h2>
+      <h2 className="mb-2 text-sm font-medium">{tr("admin.key_rotator")}</h2>
       {!rotator?.keys?.length ? (
         <p className="rounded-lg border border-dashed border-border bg-bg p-6 text-sm text-fg-muted">
-          No keys reported. (FakeLLM backend has no real rotator state.)
+          {tr("admin.no_keys")}
         </p>
       ) : (
         <table className="w-full overflow-hidden rounded-lg border border-border bg-bg text-sm">
           <thead className="text-left text-xs uppercase text-fg-subtle">
             <tr>
-              <th className="px-3 py-2">Key</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2 text-right">Requests</th>
-              <th className="px-3 py-2 text-right">Failures</th>
-              <th className="px-3 py-2">Last error</th>
-              <th className="px-3 py-2 text-right">Cooldown</th>
+              <th className="px-3 py-2">{tr("common.key")}</th>
+              <th className="px-3 py-2">{tr("common.status")}</th>
+              <th className="px-3 py-2 text-right">{tr("common.requests")}</th>
+              <th className="px-3 py-2 text-right">{tr("common.failures")}</th>
+              <th className="px-3 py-2">{tr("common.last_error")}</th>
+              <th className="px-3 py-2 text-right">{tr("common.cooldown")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">

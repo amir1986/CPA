@@ -1,38 +1,41 @@
 import { apiFetch } from "@/lib/api/client";
 import type { FileOut } from "@/lib/api/types";
 import { UploadForm } from "@/components/docs/upload-form";
+import { t } from "@/lib/i18n";
+import { getLocale } from "@/lib/i18n/server";
 
 type Props = { params: Promise<{ eid: string }> };
 
 export default async function DocumentsPage({ params }: Props) {
+  const locale = await getLocale();
+  const tr = (k: string, v?: Record<string, string | number>) => t(k, locale, v);
   const { eid } = await params;
   const data = await apiFetch<{ items: FileOut[]; total: number }>(`/engagements/${eid}/files`);
 
   return (
     <div className="mx-auto max-w-5xl">
-      <h1 className="mb-3 text-xl font-semibold">Documents</h1>
+      <h1 className="mb-3 text-xl font-semibold">{tr("documents.title")}</h1>
       <p className="mb-5 text-sm text-fg-muted">
-        Upload trial balances, GLs, bank statements, invoices, contracts. Each file is hashed,
-        stored in object storage, and queued for parsing.
+        {tr("documents.subtitle")}
       </p>
       <div className="mb-6">
         <UploadForm engagementId={eid} />
       </div>
       <section className="rounded-lg border border-border bg-bg">
         <header className="border-b border-border px-4 py-2.5 text-xs uppercase text-fg-subtle">
-          {data.total} file{data.total === 1 ? "" : "s"}
+          {tr(data.total === 1 ? "documents.file_count_one" : "documents.file_count_many", { n: data.total })}
         </header>
         {data.items.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-fg-muted">No files yet.</p>
+          <p className="px-4 py-6 text-sm text-fg-muted">{tr("engagements.no_files")}</p>
         ) : (
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase text-fg-subtle">
               <tr>
-                <th className="px-4 py-2">Name</th>
-                <th className="px-4 py-2">Kind</th>
-                <th className="px-4 py-2">Size</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2">sha256</th>
+                <th className="px-4 py-2">{tr("common.name")}</th>
+                <th className="px-4 py-2">{tr("documents.kind")}</th>
+                <th className="px-4 py-2">{tr("common.size")}</th>
+                <th className="px-4 py-2">{tr("common.status")}</th>
+                <th className="px-4 py-2">{tr("documents.sha256")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">

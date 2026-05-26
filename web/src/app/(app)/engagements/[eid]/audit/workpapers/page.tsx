@@ -1,4 +1,6 @@
 import { apiFetch } from "@/lib/api/client";
+import { t } from "@/lib/i18n";
+import { getLocale } from "@/lib/i18n/server";
 
 type Workpaper = {
   id: string;
@@ -12,15 +14,17 @@ type Workpaper = {
 type Props = { params: Promise<{ eid: string }> };
 
 export default async function WorkpapersPage({ params }: Props) {
+  const locale = await getLocale();
+  const tr = (k: string) => t(k, locale);
   const { eid } = await params;
   const rows = await apiFetch<Workpaper[]>(`/engagements/${eid}/audit/workpapers`);
 
   return (
     <div className="mx-auto max-w-5xl">
-      <h1 className="mb-3 text-xl font-semibold">Workpapers</h1>
+      <h1 className="mb-3 text-xl font-semibold">{tr("audit.workpapers_title")}</h1>
       {rows.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border bg-bg p-6 text-sm text-fg-muted">
-          No workpapers yet. Generate one from the agent or via the API:{" "}
+          {tr("audit.no_workpapers")}{" "}
           <code className="font-mono">POST /engagements/{eid}/audit/workpapers</code>
         </p>
       ) : (

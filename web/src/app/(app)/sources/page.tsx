@@ -1,10 +1,14 @@
 import { apiFetch } from "@/lib/api/client";
 import type { Source } from "@/lib/api/types";
 import { KnowledgeGraph } from "@/components/knowledge/graph";
+import { t } from "@/lib/i18n";
+import { getLocale } from "@/lib/i18n/server";
 
 type Graph = Parameters<typeof KnowledgeGraph>[0]["initial"];
 
 export default async function SourcesPage() {
+  const locale = await getLocale();
+  const tr = (k: string) => t(k, locale);
   const [sources, graph] = await Promise.all([
     apiFetch<Source[]>("/sources"),
     apiFetch<Graph>("/knowledge/graph"),
@@ -18,19 +22,16 @@ export default async function SourcesPage() {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <h1 className="mb-1 text-xl font-semibold">Knowledge sources</h1>
-      <p className="mb-4 text-sm text-fg-muted">
-        Public-excerpt standards corpora and the concept ↔ standard graph
-        derived from them.
-      </p>
+      <h1 className="mb-1 text-xl font-semibold">{tr("sources.title")}</h1>
+      <p className="mb-4 text-sm text-fg-muted">{tr("sources.subtitle")}</p>
 
       <section className="mb-8">
-        <h2 className="mb-2 text-sm font-medium">Concept graph</h2>
+        <h2 className="mb-2 text-sm font-medium">{tr("sources.concept_graph")}</h2>
         <KnowledgeGraph initial={graph} />
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-medium">Sources catalog</h2>
+        <h2 className="mb-2 text-sm font-medium">{tr("sources.catalog")}</h2>
         <div className="space-y-5">
           {Object.entries(grouped).map(([k, list]) => (
             <div key={k}>

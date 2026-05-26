@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Core, EventObject, Ext, LayoutOptions, NodeSingular, StylesheetJson } from "cytoscape";
 import { Loader2, Search } from "lucide-react";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/lib/i18n/client";
 
 type Node = {
   id: string;
@@ -35,6 +37,7 @@ const JURISDICTIONS = ["US", "IFRS", "IL"] as const;
 const CORPUS_TYPES = ["accounting", "auditing", "tax"] as const;
 
 export function KnowledgeGraph({ initial }: { initial: Graph }) {
+  const locale = useLocale();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const [graph, setGraph] = useState<Graph>(initial);
@@ -130,7 +133,7 @@ export function KnowledgeGraph({ initial }: { initial: Graph }) {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search nodes…"
+            placeholder={t("sources.search_nodes", locale)}
             className="flex-1 rounded-md border border-border bg-bg-elev px-2 py-1 text-sm"
           />
           {loading && <Loader2 className="h-4 w-4 animate-spin text-fg-muted" />}
@@ -140,24 +143,24 @@ export function KnowledgeGraph({ initial }: { initial: Graph }) {
           className="h-[640px] w-full rounded-md border border-border bg-bg-elev"
         />
         <div className="mt-2 flex items-center gap-3 text-xs text-fg-muted">
-          <Legend color="var(--c-brand)" label="concept" />
-          <Legend color="var(--c-info)" label="standard" />
-          <Legend color="var(--c-fg-muted)" label="paragraph" />
+          <Legend color="var(--c-brand)" label={t("sources.concept", locale)} />
+          <Legend color="var(--c-info)" label={t("sources.standard", locale)} />
+          <Legend color="var(--c-fg-muted)" label={t("sources.paragraph", locale)} />
           <span className="ms-auto">
-            {graph.nodes.length} nodes / {graph.edges.length} edges{" "}
-            {graph.truncated ? "(truncated)" : ""}
+            {t("sources.graph_counts", locale, { nodes: graph.nodes.length, edges: graph.edges.length })}{" "}
+            {graph.truncated ? t("sources.truncated", locale) : ""}
           </span>
         </div>
       </div>
       <aside className="space-y-4">
         <FilterGroup
-          title="Jurisdiction"
+          title={t("sources.jurisdiction", locale)}
           options={JURISDICTIONS}
           selected={jurisdictions}
           onToggle={(v) => setJurisdictions(toggle(jurisdictions, v))}
         />
         <FilterGroup
-          title="Corpus type"
+          title={t("sources.corpus_type", locale)}
           options={CORPUS_TYPES}
           selected={corpusTypes}
           onToggle={(v) => setCorpusTypes(toggle(corpusTypes, v))}
@@ -166,7 +169,7 @@ export function KnowledgeGraph({ initial }: { initial: Graph }) {
           <NodeCard node={selected} />
         ) : (
           <p className="rounded-lg border border-dashed border-border bg-bg p-4 text-xs text-fg-muted">
-            Tap a node to see details.
+            {t("sources.tap_node", locale)}
           </p>
         )}
       </aside>

@@ -117,6 +117,15 @@ async def _principal_for_demo_user(session: AsyncSession) -> RequestPrincipal | 
     res = await session.execute(select(User).where(User.email == DEMO_USER_EMAIL))
     user = res.scalar_one_or_none()
     if user is None:
+        try:
+            from app.services.demo_bootstrap import ensure_demo_user_exists
+
+            await ensure_demo_user_exists()
+        except Exception:
+            return None
+        res = await session.execute(select(User).where(User.email == DEMO_USER_EMAIL))
+        user = res.scalar_one_or_none()
+    if user is None:
         return None
     return RequestPrincipal(
         user_id=user.id,
