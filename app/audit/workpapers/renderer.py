@@ -70,8 +70,8 @@ def render_pdf_bytes(body_md: str) -> bytes:
             + "</pre></body></html>"
         )
         return HTML(string=html).write_pdf()
-    except (ImportError, OSError):
-        pass
+    except Exception as exc:
+        logger.warning("WeasyPrint PDF render unavailable; falling back to fpdf2: %r", exc)
 
     # Path 2 — fpdf2 fallback. Always available in core deps now.
     try:
@@ -125,7 +125,24 @@ def _fpdf_render(body_md: str, FPDF: type) -> bytes:
             continue
         _render_md_line(pdf, line, epw, font_name)
     out = pdf.output()
-    return bytes(out)
+    return _pdf_output_to_bytes(out)
+
+
+def _pdf_output_to_bytes(out: object) -> bytes:
+    """Normalize PDF backend output across fpdf/fpdf2 versions.
+
+    fpdf2 returns bytes-like data. The legacy ``fpdf`` package shares the
+    same import namespace and can return a latin-1 ``str`` instead; passing
+    that to ``bytes(...)`` raises ``TypeError`` and turns an otherwise valid
+    export into a 500.
+    """
+    if isinstance(out, bytes):
+        return out
+    if isinstance(out, bytearray):
+        return bytes(out)
+    if isinstance(out, str):
+        return out.encode("latin-1")
+    raise TypeError(f"unexpected PDF output type: {type(out).__name__}")
 
 
 def _add_font(pdf, family: str, style: str, path: Path) -> None:
