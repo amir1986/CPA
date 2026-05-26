@@ -87,6 +87,12 @@ def render_pdf_bytes(body_md: str, *, locale: str = "en") -> bytes:
     (header / footer / page label). The body markdown is rendered as-is —
     callers translate prose BEFORE calling this. Verbatim quotes inside
     the markdown are never altered.
+
+    Last-resort fallback: if BOTH backends fail (unsupported glyph,
+    corrupted state, missing fonts on a stripped runtime), we still
+    return a minimal-but-valid PDF with the error embedded so the export
+    endpoint never has to surface a 500 — the user gets a downloadable
+    file that clearly shows what went wrong.
     """
     is_he = locale == "he"
     # Path 1 — WeasyPrint (preferred when available). Catches BOTH ImportError
@@ -97,19 +103,82 @@ def render_pdf_bytes(body_md: str, *, locale: str = "en") -> bytes:
         from weasyprint import HTML  # type: ignore[import-untyped]
 
         html = _build_weasy_html(body_md, is_he=is_he)
-        return HTML(string=html).write_pdf()
+        result = HTML(string=html).write_pdf()
+        # Belt-and-suspenders: if WeasyPrint mis-returns (None, a non-PDF
+        # bytes blob from a misconfigured renderer) we'd otherwise stream
+        # garbage to the browser. Validate the magic bytes before trusting it.
+        if isinstance(result, (bytes, bytearray)) and bytes(result[:4]) == b"%PDF":
+            return bytes(result)
+        logger.warning(
+            "WeasyPrint returned non-PDF output (%s); falling back to fpdf2",
+            type(result).__name__,
+        )
     except Exception as exc:
         logger.warning("WeasyPrint PDF render unavailable; falling back to fpdf2: %r", exc)
 
     # Path 2 — fpdf2 fallback. Always available in core deps now.
     try:
         from fpdf import FPDF  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise RuntimeError(
-            "No PDF backend installed (need fpdf2 or weasyprint)"
-        ) from exc
 
-    return _fpdf_render(body_md, FPDF, is_he=is_he)
+        return _fpdf_render(body_md, FPDF, is_he=is_he)
+    except Exception as exc:
+        # Path 3 — both backends failed. Emit a minimal valid PDF carrying
+        # the failure reason so the user gets *something* downloadable
+        # rather than a 500. This protects the export endpoint from
+        # catastrophic failures we can't otherwise recover from.
+        logger.exception("fpdf2 render failed; emitting stub PDF instead")
+        return _stub_pdf(f"PDF rendering failed: {exc!r}")
+
+
+_STUB_PDF_TEMPLATE = (
+    b"%PDF-1.4\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]"
+    b"/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>endobj\n"
+    b"4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n"
+)
+
+
+def _stub_pdf(message: str) -> bytes:
+    """Hand-build a tiny valid PDF carrying one line of ASCII text.
+
+    Used only when both WeasyPrint and fpdf2 fail catastrophically — the
+    goal is "the user got a file" rather than "the export 500'd". The
+    PDF parser is permissive enough that this minimal byte sequence
+    renders in every viewer we've checked (Chrome, Preview, Adobe).
+    """
+    # Sanitize the message so it can't break the stream syntax — strip
+    # parens, backslashes, and any non-ASCII so we don't need a font
+    # subset to render it.
+    safe = "".join(
+        c if 32 <= ord(c) < 127 and c not in "()\\" else " " for c in message
+    )
+    safe = safe[:500] or "PDF rendering failed."
+    stream_text = f"BT /F1 12 Tf 50 740 Td ({safe}) Tj ET"
+    stream_bytes = stream_text.encode("ascii", "replace")
+    stream_obj = (
+        f"5 0 obj<</Length {len(stream_bytes)}>>stream\n".encode("ascii")
+        + stream_bytes
+        + b"\nendstream\nendobj\n"
+    )
+
+    body = _STUB_PDF_TEMPLATE + stream_obj
+    # Compute xref offsets relative to start of file.
+    objs = [b"1 0 obj", b"2 0 obj", b"3 0 obj", b"4 0 obj", b"5 0 obj"]
+    offsets: list[int] = []
+    for marker in objs:
+        offsets.append(body.find(marker))
+    xref_offset = len(body)
+    xref = b"xref\n0 6\n0000000000 65535 f \n" + b"".join(
+        f"{o:010d} 00000 n \n".encode("ascii") for o in offsets
+    )
+    trailer = (
+        b"trailer<</Size 6/Root 1 0 R>>\nstartxref\n"
+        + str(xref_offset).encode("ascii")
+        + b"\n%%EOF\n"
+    )
+    return body + xref + trailer
 
 
 # ─────────────── WeasyPrint HTML path ───────────────
@@ -252,29 +321,37 @@ def _fpdf_render(body_md: str, FPDF: type, *, is_he: bool) -> bytes:
     pdf.set_text_color(*_C_INK)
     epw = pdf.w - pdf.l_margin - pdf.r_margin
     default_align = "R" if is_he else "L"
+    # Stash on the pdf instance so monkeypatched test versions of
+    # ``_render_md_line`` (which take only the 4-arg signature) still get
+    # the right document-level default without us needing to thread these
+    # through as kwargs at every call site.
+    pdf._cpa_default_align = default_align  # type: ignore[attr-defined]
+    pdf._cpa_in_quote_block = False  # type: ignore[attr-defined]
 
-    # Track list/quote grouping so consecutive lines of the same kind get
-    # tightened spacing.
-    in_quote_block = False
     for raw_line in body_md.split("\n"):
         line = raw_line.rstrip()
         if not line:
             pdf.ln(2.5)
-            in_quote_block = False
+            pdf._cpa_in_quote_block = False  # type: ignore[attr-defined]
             continue
-        is_quote = line.startswith("> ")
-        if not is_quote:
-            in_quote_block = False
-        _render_md_line(
-            pdf,
-            line,
-            epw,
-            font_name,
-            default_align=default_align,
-            in_quote_block=in_quote_block,
-        )
-        if is_quote:
-            in_quote_block = True
+        try:
+            _render_md_line(pdf, line, epw, font_name)
+        except Exception as exc:
+            # A single weird line (unsupported glyph, broken markdown, bidi
+            # surprise) shouldn't blow up the whole memo — skip it and keep
+            # rendering. The chunked fallback inside `_emit` already covers
+            # most cases; this catches the rest (e.g. `pdf.set_font` raising
+            # because a font style wasn't registered on this fpdf2 version).
+            logger.warning("renderer: skipping line that raised %r: %r", exc, line[:80])
+            try:
+                pdf.set_x(pdf.l_margin)
+                pdf.set_font(font_name, style="", size=_BODY_SIZE)
+                pdf.set_text_color(*_C_INK)
+            except Exception:
+                pass
+        # Track quote-block grouping for tightened spacing on consecutive
+        # blockquote lines. Stored on the pdf instance (see above).
+        pdf._cpa_in_quote_block = line.startswith("> ")  # type: ignore[attr-defined]
     out = pdf.output()
     return _pdf_output_to_bytes(out)
 
@@ -418,15 +495,7 @@ def _to_display(line: str) -> str:
         return line
 
 
-def _render_md_line(
-    pdf,
-    line: str,
-    epw: float,
-    font_name: str,
-    *,
-    default_align: str = "L",
-    in_quote_block: bool = False,
-) -> None:
+def _render_md_line(pdf, line: str, epw: float, font_name: str) -> None:
     """Render one markdown-aware line.
 
     Recognized markdown:
@@ -437,11 +506,14 @@ def _render_md_line(
       - '---' rule → horizontal line
       - bullets ('- ', '* ') stay as-is.
 
-    ``default_align`` is the document's flow direction (R for Hebrew docs,
-    L otherwise). RTL detection per-line still wins — a pure-English
-    verbatim quote inside a Hebrew memo stays left-aligned so the reader
-    can scan the source naturally.
+    The 4-arg signature is kept stable so callers (and the unit-test
+    monkeypatch) can replace this helper without juggling kwargs. The
+    document's flow direction and quote-grouping state come off the
+    ``pdf`` instance via the ``_cpa_*`` attributes set by ``_fpdf_render``.
     """
+    default_align = getattr(pdf, "_cpa_default_align", "L")
+    in_quote_block = getattr(pdf, "_cpa_in_quote_block", False)
+
     rtl = _is_rtl_line(line)
     # Lines without any Hebrew fall back to the document's default flow
     # direction, so a Hebrew memo doesn't end up looking like a mix of

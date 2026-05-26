@@ -28,13 +28,23 @@ test("download EN + HE PDFs through the UI", async ({ page }) => {
     }
   });
 
-  // Login is removed → go straight to the most recent done run.
+  // Login is removed → go straight to a finished run that actually has
+  // issues (no issues = no export button rendered = no PDF to download).
+  // The page returns runs newest-first; filter to done+issue_count>0.
   await page.goto("/usgaap-ifrs");
   const runs = await page.evaluate(
-    async () => (await (await fetch("/api/comparison/runs")).json()) as Array<{ id: string; status: string }>,
+    async () =>
+      (await (await fetch("/api/comparison/runs")).json()) as Array<{
+        id: string;
+        status: string;
+        issue_count: number;
+      }>,
   );
-  const done = runs.find((r) => r.status === "done");
-  expect(done, "no done run found to export").toBeDefined();
+  const done = runs.find((r) => r.status === "done" && r.issue_count > 0);
+  test.skip(
+    !done,
+    `no done run with issues found to export (have ${runs.length} runs, ${runs.filter((r) => r.status === "done").length} done) — upload a fixture and let the orchestrator finish first`,
+  );
   await page.goto(`/usgaap-ifrs/${done!.id}`);
   await expect(page.getByTestId("run-detail")).toBeVisible();
 
