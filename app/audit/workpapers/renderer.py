@@ -56,6 +56,12 @@ def render_pdf_bytes(body_md: str) -> bytes:
     the export works on every deploy regardless of whether WeasyPrint
     could be built. fpdf2 uses a system Unicode TTF when one is found so
     Hebrew (and any other non-Latin script in the memo) renders correctly.
+
+    Last-resort fallback: if BOTH backends fail (unsupported glyph,
+    corrupted state, missing fonts on a stripped runtime), we still
+    return a minimal-but-valid PDF with the error embedded so the export
+    endpoint never has to surface a 500 — the user gets a downloadable
+    file that clearly shows what went wrong.
     """
     # Path 1 — WeasyPrint (preferred when available). Catches BOTH ImportError
     # (package not installed) and OSError (package installed but native libs
@@ -69,19 +75,75 @@ def render_pdf_bytes(body_md: str) -> bytes:
             + _escape(body_md)
             + "</pre></body></html>"
         )
-        return HTML(string=html).write_pdf()
+        result = HTML(string=html).write_pdf()
+        if isinstance(result, (bytes, bytearray)) and bytes(result[:4]) == b"%PDF":
+            return bytes(result)
+        logger.warning(
+            "WeasyPrint returned non-PDF output (%s); falling back to fpdf2",
+            type(result).__name__,
+        )
     except Exception as exc:
         logger.warning("WeasyPrint PDF render unavailable; falling back to fpdf2: %r", exc)
 
     # Path 2 — fpdf2 fallback. Always available in core deps now.
     try:
         from fpdf import FPDF  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise RuntimeError(
-            "No PDF backend installed (need fpdf2 or weasyprint)"
-        ) from exc
 
-    return _fpdf_render(body_md, FPDF)
+        return _fpdf_render(body_md, FPDF)
+    except Exception as exc:
+        logger.exception("fpdf2 render failed; emitting stub PDF instead")
+        return _stub_pdf(f"PDF rendering failed: {exc!r}")
+
+
+_STUB_PDF_TEMPLATE = (
+    b"%PDF-1.4\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]"
+    b"/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>endobj\n"
+    b"4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n"
+)
+
+
+def _stub_pdf(message: str) -> bytes:
+    """Hand-build a tiny valid PDF carrying one line of ASCII text.
+
+    Used only when both WeasyPrint and fpdf2 fail catastrophically — the
+    goal is "the user got a file" rather than "the export 500'd". The
+    PDF parser is permissive enough that this minimal byte sequence
+    renders in every viewer we've checked (Chrome, Preview, Adobe).
+    """
+    # Sanitize the message so it can't break the stream syntax — strip
+    # parens, backslashes, and any non-ASCII so we don't need a font
+    # subset to render it.
+    safe = "".join(
+        c if 32 <= ord(c) < 127 and c not in "()\\" else " " for c in message
+    )
+    safe = safe[:500] or "PDF rendering failed."
+    stream_text = f"BT /F1 12 Tf 50 740 Td ({safe}) Tj ET"
+    stream_bytes = stream_text.encode("ascii", "replace")
+    stream_obj = (
+        f"5 0 obj<</Length {len(stream_bytes)}>>stream\n".encode("ascii")
+        + stream_bytes
+        + b"\nendstream\nendobj\n"
+    )
+
+    body = _STUB_PDF_TEMPLATE + stream_obj
+    # Compute xref offsets relative to start of file.
+    objs = [b"1 0 obj", b"2 0 obj", b"3 0 obj", b"4 0 obj", b"5 0 obj"]
+    offsets: list[int] = []
+    for marker in objs:
+        offsets.append(body.find(marker))
+    xref_offset = len(body)
+    xref = b"xref\n0 6\n0000000000 65535 f \n" + b"".join(
+        f"{o:010d} 00000 n \n".encode("ascii") for o in offsets
+    )
+    trailer = (
+        b"trailer<</Size 6/Root 1 0 R>>\nstartxref\n"
+        + str(xref_offset).encode("ascii")
+        + b"\n%%EOF\n"
+    )
+    return body + xref + trailer
 
 
 def _fpdf_render(body_md: str, FPDF: type) -> bytes:
@@ -123,7 +185,21 @@ def _fpdf_render(body_md: str, FPDF: type) -> bytes:
         if not line:
             pdf.ln(3)
             continue
-        _render_md_line(pdf, line, epw, font_name)
+        try:
+            _render_md_line(pdf, line, epw, font_name)
+        except Exception as exc:
+            # A single weird line (unsupported glyph, broken markdown, bidi
+            # surprise) shouldn't blow up the whole memo — skip it and keep
+            # rendering. The chunked fallback inside `_emit` already covers
+            # most cases; this catches the rest (e.g. `pdf.set_font` raising
+            # because a font style wasn't registered on this fpdf2 version).
+            logger.warning("renderer: skipping line that raised %r: %r", exc, line[:80])
+            # Reset cursor to a clean state and pretend the line was blank.
+            try:
+                pdf.set_x(pdf.l_margin)
+                pdf.set_font(font_name, style="", size=10)
+            except Exception:
+                pass
     out = pdf.output()
     return _pdf_output_to_bytes(out)
 
