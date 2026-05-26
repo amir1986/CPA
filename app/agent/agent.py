@@ -12,6 +12,7 @@ result so the router can stream them and write to ``agent_runs`` at the end.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -22,6 +23,13 @@ from app.llm.client import LLMClient
 from app.rag.prompts import SYSTEM_EN
 
 logger = logging.getLogger(__name__)
+
+# Per-step LLM timeout. CLAUDE.md §3: never await an LLM call without one,
+# otherwise a slow Ollama Cloud response pins the agent step forever and
+# stalls everything sitting on top of it (e.g. the comparison fan-out's
+# per-side _COMPARE_TIMEOUT_S can fire while the underlying call is still
+# running, leaking the task).
+_AGENT_STEP_TIMEOUT_S = 120.0
 
 
 AGENT_SYSTEM = (
@@ -74,7 +82,23 @@ async def run_agent(
             f"HISTORY (tool_call → result):\n{json.dumps(history, indent=2)[:4000]}\n\n"
             "Respond with a single JSON object. No prose."
         )
-        response = await llm.complete(prompt, system=AGENT_SYSTEM)
+        try:
+            response = await asyncio.wait_for(
+                llm.complete(prompt, system=AGENT_SYSTEM),
+                timeout=_AGENT_STEP_TIMEOUT_S,
+            )
+        except TimeoutError:
+            logger.warning(
+                "agent step %d timed out after %.0fs", step, _AGENT_STEP_TIMEOUT_S
+            )
+            return AgentResult(
+                final_answer="(agent step timed out)",
+                citations=[],
+                tool_calls=[
+                    ToolCallEvent(tool=h["tool"], arguments=h["arguments"], result=h.get("result"))
+                    for h in history
+                ],
+            )
         parsed = _parse_json(response.text)
 
         if "final" in parsed:

@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Body, Depends, Header
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -170,21 +170,35 @@ async def _run_one_ingest(source_id: str, run_id: uuid.UUID) -> None:
         _ = started
 
 
+class RefreshIn(BaseModel):
+    """Optional body for /standards/refresh.
+
+    Accepting an object (with an optional ``source_ids`` field) rather than
+    a bare list lets the StandardsRefresh client POST ``{}`` for a full
+    refresh — sending a bare-list body from JS is awkward and the previous
+    ``source_ids: list[str] | None = None`` signature 422'd on the empty
+    object.
+    """
+
+    source_ids: list[str] | None = None
+
+
 @router.post("/standards/refresh", response_model=RefreshOut)
 async def refresh_standards(
-    source_ids: list[str] | None = None,
+    body: RefreshIn = Body(default_factory=RefreshIn),
     principal: RequestPrincipal = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ) -> RefreshOut:
     """Trigger a (re-)ingest of one or more sources from config/sources.yaml.
 
-    With no body the entire registry is refreshed. Each source runs in a
-    fire-and-forget background task; the response returns immediately with
-    the list of source_ids that were enqueued. Sources already in a
-    'running' state are skipped so a double-click doesn't pile up jobs.
+    With no body (or `{}`) the entire registry is refreshed. Each source
+    runs in a fire-and-forget background task; the response returns
+    immediately with the list of source_ids that were enqueued. Sources
+    already in a 'running' state are skipped so a double-click doesn't
+    pile up jobs.
     """
     all_sources = load_sources()
-    target_ids = source_ids or [s.id for s in all_sources]
+    target_ids = body.source_ids or [s.id for s in all_sources]
     triggered: list[str] = []
     skipped: list[str] = []
 
