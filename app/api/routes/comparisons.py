@@ -483,6 +483,10 @@ async def export_memo(
             }
         )
 
+    # Assemble the memo body. Each section is wrapped individually so one
+    # bad issue (e.g. citation row corrupted to a non-dict shape) can't
+    # nuke the whole export with an unhandled AttributeError that bubbles
+    # up to FastAPI's 500 handler.
     sections: list[str] = []
     sections.append(
         f"> {strings['draft_banner']}\n\n"
@@ -495,7 +499,17 @@ async def export_memo(
     if rationale_text:
         sections.append(f"**{strings['rationale']}:** {rationale_text}\n")
     for issue_idx, i in enumerate(issues):
-        sections.append(_format_issue_section(i, per_issue_prose[issue_idx], locale))
+        try:
+            sections.append(_format_issue_section(i, per_issue_prose[issue_idx], locale))
+        except Exception as exc:
+            logger.warning(
+                "issue #%d (%s) formatting raised %r — substituting placeholder",
+                getattr(i, "seq", issue_idx), getattr(i, "id", "?"), exc,
+            )
+            sections.append(
+                f"## #{getattr(i, 'seq', issue_idx)} {getattr(i, 'topic', '(unknown topic)')}\n\n"
+                f"_(section omitted — formatting error: {exc!r})_\n"
+            )
     full = "\n\n---\n\n".join(sections)
 
     safe_name = f"usgaap-ifrs-comparison-{run.id}"
@@ -506,17 +520,26 @@ async def export_memo(
         # Hebrew memo that Render's edge times out the request with 502.
         # Off-thread it + cap with asyncio.wait_for so a pathological
         # render can't pin the worker forever.
+        #
+        # render_pdf_bytes is guaranteed not to raise (it has its own
+        # stub-PDF fallback for catastrophic failures, including
+        # BaseException-derived runtime panics like
+        # pyo3_runtime.PanicException from cryptography's Rust bindings).
+        # The remaining handlers are defense-in-depth: if a future change
+        # to the renderer regresses the no-raise contract — including via
+        # a BaseException path that the previous `except Exception` here
+        # would have leaked as the opaque "הייצוא נכשל (500)" pill the
+        # user reported on Render — we still hand back a downloadable
+        # file with the failure reason inside rather than a 500. The
+        # bare `raise` clause keeps process / task control signals
+        # propagating so uvicorn can shut the worker down and ASGI
+        # cancellation cleans up properly.
         try:
-            # No content cap — the full memo (every cite quote, every issue)
-            # goes into the PDF. Timeout is generous (5 minutes) so even a
-            # large multi-issue Hebrew export has room.
             pdf_bytes = await asyncio.wait_for(
                 asyncio.to_thread(render_pdf_bytes, full, locale=locale),
                 timeout=300.0,
             )
         except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
-            # Process / task control signals — propagate so uvicorn can shut
-            # the worker down and ASGI cancellation cleans up properly.
             raise
         except TimeoutError as exc:
             raise ApiError(
@@ -525,17 +548,10 @@ async def export_memo(
                 detail="PDF rendering took longer than 5 minutes — try the markdown export instead",
             ) from exc
         except BaseException as exc:
-            # Anything else — including BaseException-derived runtime panics
-            # (pyo3_runtime.PanicException from cryptography's Rust bindings,
-            # observed on Render's free-tier slim install) — degrades to a
-            # downloadable stub PDF carrying the error reason. Returning a
-            # bare 500 here would surface to the UI as the opaque "הייצוא
-            # נכשל (500)" pill the user reported, because the bare uvicorn
-            # 500 page isn't JSON and ExportMemoButton can't read a detail
-            # out of it.
-            logger.exception("pdf render crashed for run %s", run_id)
+            logger.exception("pdf render unexpectedly raised for run %s", run_id)
             from app.audit.workpapers.renderer import _stub_pdf
-            pdf_bytes = _stub_pdf(f"PDF rendering failed: {exc!r}")
+
+            pdf_bytes = _stub_pdf(f"PDF render crashed: {exc!r}")
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",
@@ -732,17 +748,35 @@ def _format_issue_section(
     straight from ``i.*_citations`` and are NEVER translated.
     """
     s = _MEMO_STRINGS.get(locale, _MEMO_STRINGS["en"])
+
+    def _txt(key: str, default: str = "") -> str:
+        """Pull a string from `prose`, coercing non-strings to default.
+
+        A stray non-str value (an LLM translation returning a list or
+        number for a key) would otherwise crash assembly with
+        ``TypeError: can only concatenate str (not "list") to str`` at
+        the ``+ "\\n"`` below, which surfaces as a 500."""
+        v = prose.get(key)
+        return v if isinstance(v, str) else default
+
     parts: list[str] = []
     parts.append(f"## #{i.seq} {i.topic}\n")
 
     # --- Current treatment from the user's document ---
     parts.append(f"### {s['current_treatment']}\n")
-    parts.append((prose.get("current_summary") or s["no_current_summary"]) + "\n")
-    if i.current_user_cites:
+    parts.append((_txt("current_summary") or s["no_current_summary"]) + "\n")
+    user_cites = i.current_user_cites if isinstance(i.current_user_cites, list) else []
+    if user_cites:
         parts.append(f"#### {s['source_paragraphs_user']}\n")
-        for c in i.current_user_cites:
+        for c in user_cites:
+            if not isinstance(c, dict):
+                # Tolerant of malformed JSONB rows: best-effort stringify.
+                parts.append(f"> {c!r}")
+                parts.append("")
+                continue
             anchor = c.get("anchor") or c.get("ref") or "?"
-            quote = (c.get("quote") or "").strip()
+            quote_raw = c.get("quote")
+            quote = quote_raw.strip() if isinstance(quote_raw, str) else ""
             parts.append(f"> **{anchor}**")
             if quote:
                 parts.append(f"> {quote}")
@@ -750,49 +784,59 @@ def _format_issue_section(
 
     # --- US GAAP side ---
     parts.append(f"### {s['us_gaap_treatment']}\n")
-    parts.append((prose.get("gaap_summary") or s["no_gaap_retrieved"]) + "\n")
+    parts.append((_txt("gaap_summary") or s["no_gaap_retrieved"]) + "\n")
     parts.append(f"#### {s['source_paragraphs_gaap']}\n")
     parts.append(_format_inline_cites(i.gaap_citations, locale))
-    if prose.get("gaap_verification"):
+    if _txt("gaap_verification"):
         parts.append(f"#### {s['verifier_us']}\n")
-        parts.append(prose["gaap_verification"] + "\n")
+        parts.append(_txt("gaap_verification") + "\n")
 
     # --- IFRS side ---
     parts.append(f"### {s['ifrs_treatment']}\n")
-    parts.append((prose.get("ifrs_summary") or s["no_ifrs_retrieved"]) + "\n")
+    parts.append((_txt("ifrs_summary") or s["no_ifrs_retrieved"]) + "\n")
     parts.append(f"#### {s['source_paragraphs_ifrs']}\n")
     parts.append(_format_inline_cites(i.ifrs_citations, locale))
-    if prose.get("ifrs_verification"):
+    if _txt("ifrs_verification"):
         parts.append(f"#### {s['verifier_ifrs']}\n")
-        parts.append(prose["ifrs_verification"] + "\n")
+        parts.append(_txt("ifrs_verification") + "\n")
 
     # --- Differences + conversion impact ---
     parts.append(f"### {s['key_differences']}\n")
-    parts.append((prose.get("differences") or s["see_summaries_above"]) + "\n")
-    if prose.get("conversion_impact"):
+    parts.append((_txt("differences") or s["see_summaries_above"]) + "\n")
+    if _txt("conversion_impact"):
         parts.append(f"### {s['conversion_impact']}\n")
-        parts.append(prose["conversion_impact"] + "\n")
+        parts.append(_txt("conversion_impact") + "\n")
 
     return "\n".join(parts)
 
 
-def _format_inline_cites(cites: list[dict], locale: str = "en") -> str:
+def _format_inline_cites(cites: object, locale: str = "en") -> str:
     """Each cited paragraph is rendered as a labelled blockquote so it
     visually sits next to the summary it backs. Verbatim quotes are
     preserved in full — no truncation, no translation (citation integrity
     requires the original source language).
 
     Only the ``source:`` label is localized.
+
+    Tolerant of malformed input: JSONB columns can technically hold any
+    JSON value, so we coerce non-dict entries (and non-list inputs) to
+    a stringified blockquote instead of crashing with
+    ``AttributeError: 'NoneType' object has no attribute 'get'``.
     """
     s = _MEMO_STRINGS.get(locale, _MEMO_STRINGS["en"])
-    if not cites:
+    if not cites or not isinstance(cites, list):
         return s["none_retrieved"] + "\n"
     out: list[str] = []
     for c in cites:
+        if not isinstance(c, dict):
+            out.append(f"> {c!r}")
+            out.append("")
+            continue
         std = c.get("standard") or "(no standard)"
         para = c.get("paragraph")
         url = c.get("url") or ""
-        quote = (c.get("quote") or "").strip()
+        quote_raw = c.get("quote")
+        quote = quote_raw.strip() if isinstance(quote_raw, str) else ""
         header = f"> **{std}**"
         if para:
             header += f" ¶{para}"
