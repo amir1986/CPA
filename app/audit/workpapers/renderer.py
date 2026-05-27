@@ -98,7 +98,11 @@ def render_pdf_bytes(body_md: str, *, locale: str = "en") -> bytes:
     # Path 1 — WeasyPrint (preferred when available). Catches BOTH ImportError
     # (package not installed) and OSError (package installed but native libs
     # libcairo/libpango missing) so the fpdf2 fallback always runs instead of
-    # crashing the export with an opaque 500.
+    # crashing the export with an opaque 500. Also catches BaseException-
+    # derived runtime panics (pyo3_runtime.PanicException raised when
+    # cryptography's Rust bindings fail to load — observed on Render's
+    # free-tier slim install) which would otherwise propagate past `Exception`
+    # and surface as a bare 500 with no JSON body the UI can parse.
     try:
         from weasyprint import HTML  # type: ignore[import-untyped]
 
@@ -113,7 +117,9 @@ def render_pdf_bytes(body_md: str, *, locale: str = "en") -> bytes:
             "WeasyPrint returned non-PDF output (%s); falling back to fpdf2",
             type(result).__name__,
         )
-    except Exception as exc:
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except BaseException as exc:
         logger.warning("WeasyPrint PDF render unavailable; falling back to fpdf2: %r", exc)
 
     # Path 2 — fpdf2 fallback. Always available in core deps now.
@@ -121,11 +127,20 @@ def render_pdf_bytes(body_md: str, *, locale: str = "en") -> bytes:
         from fpdf import FPDF  # type: ignore[import-untyped]
 
         return _fpdf_render(body_md, FPDF, is_he=is_he)
-    except Exception as exc:
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        # Process-level signals — propagate so cleanup / shutdown still works.
+        raise
+    except BaseException as exc:
         # Path 3 — both backends failed. Emit a minimal valid PDF carrying
         # the failure reason so the user gets *something* downloadable
         # rather than a 500. This protects the export endpoint from
-        # catastrophic failures we can't otherwise recover from.
+        # catastrophic failures we can't otherwise recover from. Catching
+        # BaseException (not just Exception) is critical here: `from fpdf
+        # import FPDF` transitively imports `cryptography`, whose Rust
+        # bindings can raise `pyo3_runtime.PanicException` (a direct
+        # BaseException subclass) when `_cffi_backend` or the native
+        # openssl module is unavailable on the host — that path would
+        # otherwise escape every `except Exception` clause in the stack.
         logger.exception("fpdf2 render failed; emitting stub PDF instead")
         return _stub_pdf(f"PDF rendering failed: {exc!r}")
 

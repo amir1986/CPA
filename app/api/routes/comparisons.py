@@ -522,24 +522,32 @@ async def export_memo(
         # render can't pin the worker forever.
         #
         # render_pdf_bytes is guaranteed not to raise (it has its own
-        # stub-PDF fallback for catastrophic failures), so the only real
-        # error path left is the asyncio.wait_for timeout. The bare
-        # `except Exception` is defense-in-depth: if a future change to
-        # the renderer regresses the no-raise contract, we still give
-        # the user a downloadable file with the failure reason inside
-        # rather than a 500.
+        # stub-PDF fallback for catastrophic failures, including
+        # BaseException-derived runtime panics like
+        # pyo3_runtime.PanicException from cryptography's Rust bindings).
+        # The remaining handlers are defense-in-depth: if a future change
+        # to the renderer regresses the no-raise contract — including via
+        # a BaseException path that the previous `except Exception` here
+        # would have leaked as the opaque "הייצוא נכשל (500)" pill the
+        # user reported on Render — we still hand back a downloadable
+        # file with the failure reason inside rather than a 500. The
+        # bare `raise` clause keeps process / task control signals
+        # propagating so uvicorn can shut the worker down and ASGI
+        # cancellation cleans up properly.
         try:
             pdf_bytes = await asyncio.wait_for(
                 asyncio.to_thread(render_pdf_bytes, full, locale=locale),
                 timeout=300.0,
             )
+        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
+            raise
         except TimeoutError as exc:
             raise ApiError(
                 status=504,
                 code="pdf_timeout",
                 detail="PDF rendering took longer than 5 minutes — try the markdown export instead",
             ) from exc
-        except Exception as exc:
+        except BaseException as exc:
             logger.exception("pdf render unexpectedly raised for run %s", run_id)
             from app.audit.workpapers.renderer import _stub_pdf
 
