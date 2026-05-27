@@ -507,10 +507,32 @@ async def _export_memo_impl(
                 v = getattr(i, k, None)
                 if v and v.strip():
                     flat[f"{i.id}.{k}"] = v
+        # Wall-clock cap for the WHOLE translation phase. Render's edge
+        # closes idle upstream connections after ~30 s — and we don't send
+        # any bytes until the memo body is built, so the translation phase
+        # IS the idle period. If we exceed the cap, the edge returns a
+        # text/plain "Internal Server Error" 500 that bypasses every one
+        # of our exception handlers (Starlette can't intercept a
+        # cancellation it never gets to see). 22 s leaves comfortable
+        # headroom for the rest of the route (memo assembly + PDF render
+        # off-thread) before that idle limit fires. On timeout we
+        # explicitly degrade to English prose — section headings stay
+        # Hebrew via _MEMO_STRINGS so the export is still visibly
+        # localized.
         try:
-            translated = await _translate_batches_parallel(flat, batch_size=8)
+            translated = await asyncio.wait_for(
+                _translate_batches_parallel(flat, batch_size=8),
+                timeout=22.0,
+            )
         except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
             raise
+        except TimeoutError as exc:
+            logger.warning(
+                "Hebrew memo translation exceeded 22s wall-clock cap; "
+                "exporting with English prose (%d keys to translate): %r",
+                len(flat), exc,
+            )
+            translated = dict(flat)
         except BaseException as exc:
             # Don't 500 because translation glitched — ship the memo with
             # English prose. Section headings + labels still come from the
@@ -701,8 +723,15 @@ async def _translate_to_hebrew(items: dict[str, str]) -> dict[str, str]:
     try:
         from app.llm.client import get_llm
         prompt = _TRANSLATE_PROMPT.format(input_json=json.dumps(nonempty, ensure_ascii=False))
-        # Long timeout — translation of a multi-issue memo is non-trivial.
-        response = await asyncio.wait_for(get_llm().complete(prompt), timeout=60.0)
+        # Per-batch cap is intentionally tight: the outer
+        # `_export_memo_impl` wraps the whole translation phase in a
+        # 22 s wall-clock budget (because Render's edge closes idle
+        # upstream connections at ~30 s and we haven't streamed any
+        # bytes yet). Keeping each batch at 18 s gives the gather a
+        # real chance to surface partial Hebrew prose before the outer
+        # budget fires; a slow single batch can still time out without
+        # killing the rest of the gather.
+        response = await asyncio.wait_for(get_llm().complete(prompt), timeout=18.0)
         text = (response.text or "").strip()
         if text.startswith("```"):
             text = text.strip("`")
