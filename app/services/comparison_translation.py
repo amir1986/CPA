@@ -59,6 +59,8 @@ PROSE_KEYS: tuple[str, ...] = (
 
 _TRANSLATE_PROMPT = """You are translating an accounting memo from English into Hebrew for a CPA partner. Translate accurately and naturally; preserve technical accounting terms (e.g. ASC 606, IFRS 15, EPS, deferred tax) but use Hebrew for everything else.
 
+Translate the ENTIRE value for every key — including any bracketed markers like "[...]", parenthetical notes, and short fragments. Do NOT leave bracketed text in English: it is descriptive prose, not code. The only English you keep is technical accounting terms and standard names (ASC nnn, IFRS nn, IAS nn, EPS, FVOCI, etc.).
+
 Return STRICT JSON with the SAME keys as the input, each value translated. Do not add or drop keys. Do not include any prose outside the JSON.
 
 INPUT:
@@ -238,11 +240,19 @@ async def pretranslate_run_to_hebrew(run_id: uuid.UUID) -> None:
             # to English; we want the export route to try again on the
             # request path rather than serve a half-Hebrew memo from
             # cache forever.
+            #
+            # Also run `localize_boilerplate` on each translated value
+            # so any canned English fragment the LLM left intact (the
+            # synthesis marker, the verifier no-corpus sentence) gets
+            # flipped to Hebrew before we persist. Without this, a
+            # partially-translated value lands in the cache, the export
+            # path serves it from cache (skipping the sync fallback),
+            # and the user sees English fragments inside a Hebrew memo.
             real: dict[str, str] = {}
             for k, v in translated.items():
                 src = flat.get(k)
                 if v and isinstance(v, str) and v != src:
-                    real[k] = v
+                    real[k] = localize_boilerplate(v, "he") or v
             if not real:
                 logger.warning(
                     "pretranslate: no fields translated for run %s "
@@ -276,3 +286,110 @@ def translations_cover(
     if not cache:
         return False
     return all(k in cache for k in flat)
+
+
+# ─────────────── Boilerplate localization ───────────────
+#
+# The orchestrator emits a small set of canned English phrases that get
+# stored directly on the issue rows as part of the prose fields:
+#
+#   - synthesis marker:        gaap_summary, ifrs_summary
+#   - verifier no-corpus:      gaap_verification, ifrs_verification
+#   - verifier empty quotes:   gaap_verification, ifrs_verification
+#   - verifier crash:          gaap_verification, ifrs_verification
+#   - derived differences:     differences
+#
+# LLM translation tends to either preserve bracketed markers in their
+# source language (treating them as code-like literals) or to drop the
+# whole field on a parse error / timeout. Either way, the user ends up
+# with English fragments inside what's supposed to be a fully-Hebrew
+# memo — which is exactly the bug the screenshot ticket reported.
+#
+# These maps localize the canned phrases deterministically — no LLM call,
+# no failure mode. Applied AFTER LLM translation so any successful
+# translation wins; canned phrases the LLM left untranslated still get
+# flipped to Hebrew. Idempotent (no English substrings inside the Hebrew
+# translations, so a second pass is a no-op).
+
+_HE_BOILERPLATE_MAP: dict[str, str] = {
+    # Synthesis marker — literal prefix on gaap_summary / ifrs_summary
+    # when the agent refuses and the synthesis-fallback path runs.
+    "[synthesized from model knowledge — no standards retrieved]":
+        "[סונתז מידע מהמודל — לא אותרו תקנים]",
+
+    # Verifier no-corpus canned (per framework).
+    "No US GAAP (FASB ASC) standards quotes were retrieved for this side "
+    "— verification not possible. Treat the summary as based on the "
+    "model's general knowledge only.":
+        "לא אותרו ציטוטי תקני US GAAP (FASB ASC) עבור צד זה — לא ניתן לבצע "
+        "אימות. יש להתייחס לסיכום כאל מבוסס על ידע כללי של המודל בלבד.",
+
+    "No IFRS / IAS standards quotes were retrieved for this side "
+    "— verification not possible. Treat the summary as based on the "
+    "model's general knowledge only.":
+        "לא אותרו ציטוטי תקני IFRS / IAS עבור צד זה — לא ניתן לבצע אימות. "
+        "יש להתייחס לסיכום כאל מבוסס על ידע כללי של המודל בלבד.",
+
+    # Verifier empty-quotes canned.
+    "Citations were returned for US GAAP (FASB ASC) but every quote was "
+    "empty — verification not possible against empty source text.":
+        "התקבלו ציטוטים עבור US GAAP (FASB ASC) אך כל ציטוט היה ריק — "
+        "לא ניתן לבצע אימות מול טקסט מקור ריק.",
+
+    "Citations were returned for IFRS / IAS but every quote was "
+    "empty — verification not possible against empty source text.":
+        "התקבלו ציטוטים עבור IFRS / IAS אך כל ציטוט היה ריק — "
+        "לא ניתן לבצע אימות מול טקסט מקור ריק.",
+
+    # Derived differences canned (three shapes from _derive_differences).
+    "Compare the two summaries above. The US GAAP excerpts emphasize the "
+    "FASB ASC measurement rules; the IFRS excerpts apply the IASB "
+    "principles-based approach. See the side-by-side citations for the "
+    "controlling paragraphs.":
+        "השוו בין שני הסיכומים שלמעלה. הקטעים של US GAAP מדגישים את כללי "
+        "המדידה של FASB ASC; הקטעים של IFRS מיישמים את הגישה מבוססת-"
+        "העקרונות של IASB. ראו את הציטוטים צד-לצד עבור הפסקאות הקובעות.",
+
+    "Only US GAAP standards were retrieved; IFRS standards corpus may "
+    "not be loaded.":
+        "אותרו רק תקני US GAAP; ייתכן שמאגר תקני IFRS לא נטען.",
+
+    "Only IFRS standards were retrieved; US GAAP corpus may not be loaded.":
+        "אותרו רק תקני IFRS; ייתכן שמאגר US GAAP לא נטען.",
+}
+
+
+# Sorted by length descending so a longer pattern (e.g. the full
+# verifier-no-corpus sentence) is matched before any short substring
+# that might appear inside it. Exact-match `str.replace` is fine here —
+# none of the keys overlap once sorted longest-first.
+_HE_BOILERPLATE_PAIRS: list[tuple[str, str]] = sorted(
+    _HE_BOILERPLATE_MAP.items(), key=lambda kv: -len(kv[0])
+)
+
+
+def localize_boilerplate(text: str | None, locale: str) -> str | None:
+    """Replace orchestrator-emitted English boilerplate fragments with
+    Hebrew equivalents. Returns the input unchanged for non-Hebrew
+    locales or when no fragment matches.
+
+    Designed to run *after* the LLM translation step so successful
+    translations are preserved. The boilerplate fragments are exact
+    English strings — if the LLM already translated them, the substring
+    no longer matches and this call is a no-op.
+
+    Also handles the dynamic ``(verifier agent failed: <exc>)`` prefix
+    so that error report keeps a Hebrew framing even when the embedded
+    exception string is opaque.
+    """
+    if not text or locale != "he":
+        return text
+    out = text
+    for en, he in _HE_BOILERPLATE_PAIRS:
+        if en in out:
+            out = out.replace(en, he)
+    # Dynamic verifier-failure prefix — has a runtime exception repr
+    # appended that we can't predict, so we just swap the leading framing.
+    if "(verifier agent failed:" in out:
+        out = out.replace("(verifier agent failed:", "(סוכן האימות נכשל:")
+    return out

@@ -217,6 +217,100 @@ def test_translations_cover_requires_every_key() -> None:
     assert not translation_svc.translations_cover(None, flat)
 
 
+# ─────────────── boilerplate localization ───────────────
+
+
+def test_localize_boilerplate_passthrough_for_english_locale() -> None:
+    """English exports must not be touched — `localize_boilerplate`
+    short-circuits when locale != 'he'."""
+    text = "[synthesized from model knowledge — no standards retrieved]\n\nbody"
+    assert translation_svc.localize_boilerplate(text, "en") == text
+
+
+def test_localize_boilerplate_translates_synthesis_marker() -> None:
+    """The synthesis-fallback prefix is the most visible English fragment
+    when LLM translation degrades — must always Hebrew-ize."""
+    text = (
+        "[synthesized from model knowledge — no standards retrieved]\n\n"
+        "Under US GAAP, interest income is recognized using the EIR."
+    )
+    out = translation_svc.localize_boilerplate(text, "he") or ""
+    assert "[סונתז מידע מהמודל — לא אותרו תקנים]" in out
+    # The body after the marker stays as-is (LLM territory).
+    assert "Under US GAAP" in out
+
+
+def test_localize_boilerplate_translates_verifier_no_corpus() -> None:
+    """The verifier's canned 'no quotes were retrieved' sentence — emitted
+    per framework — must localize cleanly. Both US GAAP and IFRS variants
+    are covered."""
+    us = (
+        "No US GAAP (FASB ASC) standards quotes were retrieved for this side "
+        "— verification not possible. Treat the summary as based on the "
+        "model's general knowledge only."
+    )
+    ifrs = (
+        "No IFRS / IAS standards quotes were retrieved for this side "
+        "— verification not possible. Treat the summary as based on the "
+        "model's general knowledge only."
+    )
+    out_us = translation_svc.localize_boilerplate(us, "he") or ""
+    out_ifrs = translation_svc.localize_boilerplate(ifrs, "he") or ""
+    assert "לא אותרו ציטוטי תקני US GAAP" in out_us
+    assert "לא אותרו ציטוטי תקני IFRS" in out_ifrs
+    # No English carry-over in either result.
+    assert "No US GAAP" not in out_us
+    assert "No IFRS" not in out_ifrs
+
+
+def test_localize_boilerplate_translates_derived_differences() -> None:
+    """The `_derive_differences` canned text (both 'compare-above' and
+    the single-side variants) must Hebrew-ize."""
+    a = (
+        "Compare the two summaries above. The US GAAP excerpts emphasize the "
+        "FASB ASC measurement rules; the IFRS excerpts apply the IASB "
+        "principles-based approach. See the side-by-side citations for the "
+        "controlling paragraphs."
+    )
+    b = "Only US GAAP standards were retrieved; IFRS standards corpus may not be loaded."
+    c = "Only IFRS standards were retrieved; US GAAP corpus may not be loaded."
+    out_a = translation_svc.localize_boilerplate(a, "he") or ""
+    out_b = translation_svc.localize_boilerplate(b, "he") or ""
+    out_c = translation_svc.localize_boilerplate(c, "he") or ""
+    assert "השוו בין שני הסיכומים" in out_a
+    assert "אותרו רק תקני US GAAP" in out_b
+    assert "אותרו רק תקני IFRS" in out_c
+    assert "Compare the two" not in out_a
+    assert "Only US GAAP" not in out_b
+    assert "Only IFRS" not in out_c
+
+
+def test_localize_boilerplate_translates_verifier_failed_prefix() -> None:
+    """The dynamic '(verifier agent failed: <exc>)' prefix keeps the
+    runtime exception repr — only the framing flips to Hebrew."""
+    text = "(verifier agent failed: TimeoutError('60s'))"
+    out = translation_svc.localize_boilerplate(text, "he") or ""
+    assert out.startswith("(סוכן האימות נכשל:")
+    assert "TimeoutError" in out
+
+
+def test_localize_boilerplate_idempotent_on_already_hebrew_text() -> None:
+    """A second pass over Hebrew output must be a no-op — Hebrew strings
+    contain no English substring keys."""
+    text = (
+        "[synthesized from model knowledge — no standards retrieved]\n\n"
+        "Under US GAAP, interest income is recognized."
+    )
+    once = translation_svc.localize_boilerplate(text, "he") or ""
+    twice = translation_svc.localize_boilerplate(once, "he") or ""
+    assert once == twice
+
+
+def test_localize_boilerplate_none_and_empty_passthrough() -> None:
+    assert translation_svc.localize_boilerplate(None, "he") is None
+    assert translation_svc.localize_boilerplate("", "he") == ""
+
+
 def test_kick_pretranslation_no_running_loop_is_a_noop() -> None:
     """Called from a sync context (e.g. a test, or an early-startup hook),
     `kick_pretranslation` must not crash — it just logs and returns."""
