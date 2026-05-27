@@ -44,6 +44,28 @@ function upstreamUnavailable(detail: string): Response {
   );
 }
 
+// A bare 500 with no problem+json body is a strong signal the upstream
+// died mid-response or uvicorn raised before our handler could format an
+// error envelope. Re-fetching almost always works — exactly the pattern
+// the user reported ("first click 500s, retry works"). A 500 WITH a
+// detail field is a real application error and must NOT be retried (it
+// would mask the message and double the latency).
+async function isTransient500(res: Response): Promise<boolean> {
+  if (res.status !== 500) return false;
+  const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+  // Real app errors come back as application/problem+json with a detail.
+  // Anything else (text/plain "Internal Server Error", text/html edge
+  // page, empty body) is the symptom of an escaped panic / worker death.
+  if (!ct.includes("json")) return true;
+  try {
+    const clone = res.clone();
+    const body = (await clone.json()) as { detail?: unknown };
+    return !body || typeof body.detail !== "string" || body.detail.length === 0;
+  } catch {
+    return true;
+  }
+}
+
 async function fetchWithRetry(
   url: string,
   init: RequestInit,
@@ -53,10 +75,12 @@ async function fetchWithRetry(
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, init);
-      // 502/503/504 from Render's edge while cpa-api is booting also
-      // counts as transient — retry instead of forwarding the edge HTML
-      // page (the UI can't read a JSON detail out of it).
-      if (attempt < retries && (res.status === 502 || res.status === 503 || res.status === 504)) {
+      const transient =
+        res.status === 502 ||
+        res.status === 503 ||
+        res.status === 504 ||
+        (await isTransient500(res));
+      if (attempt < retries && transient) {
         await new Promise((r) => setTimeout(r, COLD_START_BACKOFF_MS[attempt] ?? 4000));
         continue;
       }
