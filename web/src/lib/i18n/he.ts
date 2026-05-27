@@ -111,6 +111,9 @@ export const he: PartialDeep<Dict> = {
     retry: "נסה שוב",
     loading: "טוען…",
     error: "שגיאה",
+    app_error_title: "משהו השתבש",
+    app_error_hint:
+      "ייתכן שה־API עדיין מתחמם לאחר פריסה — נסו שוב בעוד 30–60 שניות. אם הכשל ממשיך, בדקו את הסטטוס של שירות cpa-api.",
     save: "שמור",
     saved: "נשמר.",
     yes: "כן",

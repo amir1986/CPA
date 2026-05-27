@@ -121,6 +121,9 @@ export const en = {
     retry: "Retry",
     loading: "Loading…",
     error: "Error",
+    app_error_title: "Something went wrong",
+    app_error_hint:
+      "The API may still be warming up after a redeploy — give it 30-60 seconds and retry. If it keeps failing, check the cpa-api service status.",
     save: "Save",
     saved: "Saved.",
     yes: "yes",
