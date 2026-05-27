@@ -514,21 +514,28 @@ async def export_memo(
                 asyncio.to_thread(render_pdf_bytes, full, locale=locale),
                 timeout=300.0,
             )
-        except RuntimeError as exc:
-            raise ApiError(status=503, code="pdf_unavailable", detail=str(exc)) from exc
+        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
+            # Process / task control signals — propagate so uvicorn can shut
+            # the worker down and ASGI cancellation cleans up properly.
+            raise
         except TimeoutError as exc:
             raise ApiError(
                 status=504,
                 code="pdf_timeout",
                 detail="PDF rendering took longer than 5 minutes — try the markdown export instead",
             ) from exc
-        except Exception as exc:
+        except BaseException as exc:
+            # Anything else — including BaseException-derived runtime panics
+            # (pyo3_runtime.PanicException from cryptography's Rust bindings,
+            # observed on Render's free-tier slim install) — degrades to a
+            # downloadable stub PDF carrying the error reason. Returning a
+            # bare 500 here would surface to the UI as the opaque "הייצוא
+            # נכשל (500)" pill the user reported, because the bare uvicorn
+            # 500 page isn't JSON and ExportMemoButton can't read a detail
+            # out of it.
             logger.exception("pdf render crashed for run %s", run_id)
-            raise ApiError(
-                status=500,
-                code="pdf_render_failed",
-                detail=f"PDF render failed: {exc}",
-            ) from exc
+            from app.audit.workpapers.renderer import _stub_pdf
+            pdf_bytes = _stub_pdf(f"PDF rendering failed: {exc!r}")
         return StreamingResponse(
             io.BytesIO(pdf_bytes),
             media_type="application/pdf",

@@ -21,8 +21,17 @@ export function RunStatusPill({ runId, initial }: { runId: string; initial: stri
   const locale = useLocale();
   const [status, setStatus] = useState(initial);
 
+  // Open the SSE stream ONCE per runId and keep it open until terminal /
+  // unmount. The earlier version included `status` in this effect's deps,
+  // which tore down + reopened the connection on every event — the backend
+  // sometimes emits the "done" status during that disconnect window, so the
+  // page wouldn't reflect completion until a manual refresh. Also, the old
+  // version only called router.refresh() on terminal; we now refresh on
+  // every status change so the server component re-fetches the run detail
+  // (issues populate as the orchestrator progresses through detecting →
+  // comparing → done).
   useEffect(() => {
-    if (TERMINAL.has(status)) return;
+    if (TERMINAL.has(initial)) return;
     let aborted = false;
     const controller = new AbortController();
     (async () => {
@@ -54,12 +63,10 @@ export function RunStatusPill({ runId, initial }: { runId: string; initial: stri
               const json = JSON.parse(data) as { status?: string };
               if (event === "status" && json.status) {
                 setStatus(json.status);
-                if (TERMINAL.has(json.status)) {
-                  router.refresh();
-                }
+                router.refresh();
               }
             } catch {
-              /* ignore */
+              /* ignore non-JSON */
             }
           }
         }
@@ -71,7 +78,7 @@ export function RunStatusPill({ runId, initial }: { runId: string; initial: stri
       aborted = true;
       controller.abort();
     };
-  }, [runId, status, router]);
+  }, [runId, router, initial]);
 
   const tone = TONES[status] ?? "border-border bg-bg-elev";
   return (
