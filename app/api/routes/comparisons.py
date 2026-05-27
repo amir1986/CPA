@@ -416,6 +416,52 @@ async def export_memo(
     principal: RequestPrincipal = Depends(current_principal),
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
+    try:
+        return await _export_memo_impl(run_id, payload, principal, session)
+    except ApiError:
+        # Application-level errors (400 not_ready, 400 empty, 404 not_found,
+        # 504 pdf_timeout) carry an actionable detail field — let FastAPI's
+        # ApiError handler serialize them to problem+json so the UI can
+        # show the message.
+        raise
+    except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
+        # Process / task control signals — propagate so uvicorn shutdown
+        # and ASGI cancellation still work.
+        raise
+    except BaseException as exc:
+        # Belt-and-suspenders outer catch. Every inner layer (renderer,
+        # translation, per-issue formatting) already degrades on
+        # BaseException, but if a future change reintroduces a 500 vector
+        # we still want the user to see something better than the opaque
+        # "הייצוא נכשל (500)" pill. For PDF requests we ship a stub PDF
+        # (the renderer's stated policy: always-downloadable). For MD
+        # requests we surface a JSON detail the UI can show inline.
+        logger.exception("export_memo top-level crash for run %s", run_id)
+        if payload.format == "pdf":
+            from app.audit.workpapers.renderer import _stub_pdf
+
+            return StreamingResponse(
+                io.BytesIO(_stub_pdf(f"Export crashed: {exc!r}")),
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": (
+                        f'attachment; filename="usgaap-ifrs-comparison-{run_id}.pdf"'
+                    )
+                },
+            )
+        raise ApiError(
+            status=500,
+            code="export_crashed",
+            detail=f"Export crashed before the memo could be rendered: {exc!r}",
+        ) from exc
+
+
+async def _export_memo_impl(
+    run_id: uuid.UUID,
+    payload: ExportIn,
+    principal: RequestPrincipal,
+    session: AsyncSession,
+) -> StreamingResponse:
     run = await _load_run(run_id, principal, session)
     if run.status != ComparisonStatus.done:
         raise ApiError(status=400, code="not_ready", detail=f"run not done yet (status={run.status.value})")
@@ -463,11 +509,19 @@ async def export_memo(
                     flat[f"{i.id}.{k}"] = v
         try:
             translated = await _translate_batches_parallel(flat, batch_size=8)
-        except Exception as exc:
+        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
+            raise
+        except BaseException as exc:
             # Don't 500 because translation glitched — ship the memo with
             # English prose. Section headings + labels still come from the
             # Hebrew _MEMO_STRINGS dict baked in below, so the export is
             # visibly localized; only the LLM-generated paragraphs stay EN.
+            # Catches BaseException (not just Exception) because the LLM
+            # client's TLS handshake goes through cryptography, whose Rust
+            # bindings can raise `pyo3_runtime.PanicException` (a direct
+            # BaseException subclass) on hosts where `_cffi_backend` /
+            # native openssl is broken — same family of panic that bit
+            # render_pdf_bytes on Render's slim install.
             logger.warning(
                 "Hebrew memo translation failed; exporting with English prose: %r", exc
             )
@@ -501,7 +555,9 @@ async def export_memo(
     for issue_idx, i in enumerate(issues):
         try:
             sections.append(_format_issue_section(i, per_issue_prose[issue_idx], locale))
-        except Exception as exc:
+        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
+            raise
+        except BaseException as exc:
             logger.warning(
                 "issue #%d (%s) formatting raised %r — substituting placeholder",
                 getattr(i, "seq", issue_idx), getattr(i, "id", "?"), exc,

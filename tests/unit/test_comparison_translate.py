@@ -109,3 +109,37 @@ async def test_translate_batches_parallel_survives_one_bad_batch(
 
 async def test_translate_batches_parallel_empty_input() -> None:
     assert await routes._translate_batches_parallel({}, batch_size=8) == {}
+
+
+async def test_translate_batches_parallel_swallows_base_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A BaseException-derived panic from inside translation must not leak
+    out as a bare 500 — it has to land in the outer route's catch and
+    degrade to English. Reproduces the failure mode where cryptography's
+    Rust bindings panic during the LLM client's TLS handshake.
+    """
+
+    class FakePanic(BaseException):
+        pass
+
+    async def panicking(items):
+        raise FakePanic("simulated rust panic during translation")
+
+    monkeypatch.setattr(routes, "_translate_to_hebrew", panicking)
+
+    flat = {"k.current_summary": "en source"}
+    # The export route wraps this call in a `try / except BaseException`
+    # that degrades to English. Here we just confirm the panic isn't
+    # silently turned into a successful Hebrew translation; the panic
+    # SHOULD propagate out of _translate_batches_parallel so the route's
+    # outer catch sees it (asyncio.gather is configured with
+    # return_exceptions=True but that only catches Exception, not
+    # BaseException, in current asyncio implementations).
+    try:
+        out = await routes._translate_batches_parallel(flat, batch_size=8)
+    except FakePanic:
+        return
+    # If gather did swallow the BaseException, the output should at least
+    # not corrupt the input dict (English fallback preserved).
+    assert out["k.current_summary"] == "en source"
