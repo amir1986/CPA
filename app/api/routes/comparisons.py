@@ -48,6 +48,20 @@ from app.services.comparison_orchestrator import (
     SUPPORTED_MIMES,
     run_orchestrator,
 )
+
+# Translation helpers live in `app/services/comparison_translation.py` so
+# the orchestrator can kick HE pre-translation without an import cycle
+# through this routes module. The "private" names are re-exported here so
+# existing tests (`tests/unit/test_comparison_translate.py`) keep
+# targeting `routes._translate_to_hebrew` etc. unchanged.
+from app.services.comparison_translation import (
+    PROSE_KEYS as _PROSE_KEYS_FROM_SVC,
+)
+from app.services.comparison_translation import (
+    _flatten_for_translation,
+    _translate_batches_parallel,
+    _translate_to_hebrew,
+)
 from app.services.comparisons_engagement import get_or_create_hidden_engagement
 from app.storage.paths import raw_key, s3_uri
 from app.storage.s3 import get_object_store
@@ -474,80 +488,70 @@ async def _export_memo_impl(
     locale = "he" if payload.locale == "he" else "en"
     strings = _MEMO_STRINGS[locale]
 
-    # For Hebrew exports, translate ALL prose fields (rationale + per-issue
-    # summaries + verifier output + differences + conversion impact) in a
-    # SINGLE batched LLM call. Verbatim quotes are excluded — they stay in
-    # their source language so citation integrity is preserved.
+    # For Hebrew exports, fill the per-issue prose dict from
+    # `run.translations_he` — populated by a background task right after
+    # the orchestrator marks the run `done` (see
+    # `comparison_translation.pretranslate_run_to_hebrew`). The cache
+    # path is instant and serves a 100% Hebrew memo.
     #
-    # The entire translation step is wrapped: an unhandled exception here
-    # (e.g. LLM client init failing because OLLAMA_API_KEYS is missing, a
-    # broken httpx connection during gather, or any future code path that
-    # forgets to catch internally) would otherwise propagate to FastAPI as
-    # an opaque 500. We'd rather ship an English-fallback PDF than refuse
-    # to export — citation integrity already requires verbatim quotes stay
-    # in source language, so an all-English memo is a valid degradation.
-    PROSE_KEYS = (
-        "current_summary",
-        "gaap_summary",
-        "ifrs_summary",
-        "differences",
-        "conversion_impact",
-        "gaap_verification",
-        "ifrs_verification",
-    )
+    # If the user exported before the background task finished, or it
+    # failed, fall back to synchronous translation with a tight wall-
+    # clock cap so the response doesn't 500 on Render's ~30 s edge idle
+    # timeout. The cap fallback still ships a memo — section headings
+    # come from `_MEMO_STRINGS["he"]` regardless, only the LLM prose
+    # degrades to English.
+    PROSE_KEYS = _PROSE_KEYS_FROM_SVC
     rationale_text = run.rationale or ""
     per_issue_prose: list[dict[str, str | None]] = []
     translated: dict[str, str] = {}
     if locale == "he":
-        flat: dict[str, str] = {}
-        if rationale_text.strip():
-            flat["_run.rationale"] = rationale_text
-        for i in issues:
-            for k in PROSE_KEYS:
-                v = getattr(i, k, None)
-                if v and v.strip():
-                    flat[f"{i.id}.{k}"] = v
-        # Wall-clock cap for the WHOLE translation phase. Render's edge
-        # closes idle upstream connections after ~30 s — and we don't send
-        # any bytes until the memo body is built, so the translation phase
-        # IS the idle period. If we exceed the cap, the edge returns a
-        # text/plain "Internal Server Error" 500 that bypasses every one
-        # of our exception handlers (Starlette can't intercept a
-        # cancellation it never gets to see). 22 s leaves comfortable
-        # headroom for the rest of the route (memo assembly + PDF render
-        # off-thread) before that idle limit fires. On timeout we
-        # explicitly degrade to English prose — section headings stay
-        # Hebrew via _MEMO_STRINGS so the export is still visibly
-        # localized.
-        try:
-            translated = await asyncio.wait_for(
-                _translate_batches_parallel(flat, batch_size=8),
-                timeout=22.0,
+        flat = _flatten_for_translation(rationale_text, issues)
+        cache: dict[str, str] = dict(run.translations_he or {})
+        # `cache` covers every key we need => skip the LLM entirely.
+        if flat and all(k in cache for k in flat):
+            translated = {**flat, **cache}
+            logger.info(
+                "Hebrew memo export: served %d prose fields from cache "
+                "(run %s)",
+                len(flat), run.id,
             )
-        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
-            raise
-        except TimeoutError as exc:
-            logger.warning(
-                "Hebrew memo translation exceeded 22s wall-clock cap; "
-                "exporting with English prose (%d keys to translate): %r",
-                len(flat), exc,
-            )
-            translated = dict(flat)
-        except BaseException as exc:
-            # Don't 500 because translation glitched — ship the memo with
-            # English prose. Section headings + labels still come from the
-            # Hebrew _MEMO_STRINGS dict baked in below, so the export is
-            # visibly localized; only the LLM-generated paragraphs stay EN.
-            # Catches BaseException (not just Exception) because the LLM
-            # client's TLS handshake goes through cryptography, whose Rust
-            # bindings can raise `pyo3_runtime.PanicException` (a direct
-            # BaseException subclass) on hosts where `_cffi_backend` /
-            # native openssl is broken — same family of panic that bit
-            # render_pdf_bytes on Render's slim install.
-            logger.warning(
-                "Hebrew memo translation failed; exporting with English prose: %r", exc
-            )
-            translated = dict(flat)
+        elif not flat:
+            translated = {}
+        else:
+            # Partial or empty cache. Translate the rest on the request
+            # path under a 22 s wall-clock cap — anything beyond that
+            # risks the Render edge closing the idle upstream and
+            # returning a text/plain 500 that bypasses every exception
+            # handler. Pre-seed `translated` with whatever the cache
+            # does have so we don't re-translate it.
+            missing = {k: v for k, v in flat.items() if k not in cache}
+            try:
+                fresh = await asyncio.wait_for(
+                    _translate_batches_parallel(missing, batch_size=4),
+                    timeout=22.0,
+                )
+            except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
+                raise
+            except TimeoutError as exc:
+                logger.warning(
+                    "Hebrew memo translation exceeded 22s wall-clock cap "
+                    "(run %s, %d uncached keys, %d cached): %r",
+                    run.id, len(missing), len(cache), exc,
+                )
+                fresh = dict(missing)
+            except BaseException as exc:
+                # Don't 500 because translation glitched — ship the memo
+                # with English prose for the uncached portion. Catches
+                # BaseException because cryptography's pyo3 bindings can
+                # raise a non-Exception panic during the LLM client's TLS
+                # handshake on Render's slim install.
+                logger.warning(
+                    "Hebrew memo translation failed (run %s); "
+                    "exporting English for %d uncached keys: %r",
+                    run.id, len(missing), exc,
+                )
+                fresh = dict(missing)
+            translated = {**flat, **cache, **fresh}
         rationale_text = translated.get("_run.rationale", rationale_text)
 
     for i in issues:
@@ -702,95 +706,6 @@ _MEMO_STRINGS = {
         "source_label": "מקור",
     },
 }
-
-
-_TRANSLATE_PROMPT = """You are translating an accounting memo from English into Hebrew for a CPA partner. Translate accurately and naturally; preserve technical accounting terms (e.g. ASC 606, IFRS 15, EPS, deferred tax) but use Hebrew for everything else.
-
-Return STRICT JSON with the SAME keys as the input, each value translated. Do not add or drop keys. Do not include any prose outside the JSON.
-
-INPUT:
-{input_json}
-"""
-
-
-async def _translate_to_hebrew(items: dict[str, str]) -> dict[str, str]:
-    """Batched LLM translation of memo prose fields. Empty / None values
-    short-circuit so the LLM only sees real text. On any failure we
-    return the original English so the export still completes."""
-    nonempty = {k: v for k, v in items.items() if v and v.strip()}
-    if not nonempty:
-        return items
-    try:
-        from app.llm.client import get_llm
-        prompt = _TRANSLATE_PROMPT.format(input_json=json.dumps(nonempty, ensure_ascii=False))
-        # Per-batch cap is intentionally tight: the outer
-        # `_export_memo_impl` wraps the whole translation phase in a
-        # 22 s wall-clock budget (because Render's edge closes idle
-        # upstream connections at ~30 s and we haven't streamed any
-        # bytes yet). Keeping each batch at 18 s gives the gather a
-        # real chance to surface partial Hebrew prose before the outer
-        # budget fires; a slow single batch can still time out without
-        # killing the rest of the gather.
-        response = await asyncio.wait_for(get_llm().complete(prompt), timeout=18.0)
-        text = (response.text or "").strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.lower().startswith("json\n"):
-                text = text[5:]
-        start, end = text.find("{"), text.rfind("}")
-        if start >= 0 and end > start:
-            text = text[start : end + 1]
-        translated = json.loads(text)
-        # Merge with the original so empty values stay empty. Skip empty /
-        # whitespace-only translations — an LLM returning `""` for a field
-        # would otherwise wipe the English source and downstream truthy
-        # checks (`prose.get(key) or s["no_…_retrieved"]`) flip the memo to
-        # the "no retrieval" placeholder for a field we actually had.
-        out = dict(items)
-        for k, v in translated.items():
-            if isinstance(v, str) and v.strip() and k in out:
-                out[k] = v
-        return out
-    except Exception as exc:
-        logger.warning("memo translation failed (returning English): %r", exc)
-        return items
-
-
-async def _translate_batches_parallel(
-    flat: dict[str, str], batch_size: int = 8,
-) -> dict[str, str]:
-    """Split a flat dict of strings into small batches and translate them
-    in parallel. Each batch is a separate LLM call (~5-15 s each) — total
-    wall time stays well under the 100 s Cloudflare edge timeout even on
-    a multi-issue memo. Single 30-key batch was timing the edge out (the
-    api itself completed in 116 s, but the proxy gave up).
-
-    Translation failures degrade per-batch: failed batches just return
-    English for their keys and the rest of the memo still ships in Hebrew.
-
-    ``return_exceptions=True`` keeps one batch's failure (rotator exhausted,
-    httpx connection broken mid-flight, JSON garbage that escapes the
-    inner-most try) from cancelling the rest of the gather and surfacing
-    as a 500 to the user.
-    """
-    if not flat:
-        return flat
-    items = list(flat.items())
-    batches: list[dict[str, str]] = [
-        dict(items[i : i + batch_size]) for i in range(0, len(items), batch_size)
-    ]
-    results = await asyncio.gather(
-        *[_translate_to_hebrew(b) for b in batches],
-        return_exceptions=True,
-    )
-    out: dict[str, str] = dict(flat)
-    for batch, batch_out in zip(batches, results, strict=True):
-        if isinstance(batch_out, BaseException):
-            logger.warning("translation batch failed (keeping English): %r", batch_out)
-            continue
-        for k, v in batch_out.items():
-            out[k] = v
-    return out
 
 
 async def _maybe_translate_issue(

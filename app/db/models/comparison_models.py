@@ -60,6 +60,17 @@ class ComparisonRun(Base, TimestampMixin):
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    # Cache of Hebrew translations for the memo's prose fields, keyed by
+    # `_run.rationale` and `<issue_id>.<prose_field>` (current_summary,
+    # gaap_summary, …). Populated by a background task once the run flips
+    # to `done`; the Hebrew export route reads from this cache so it
+    # doesn't have to translate on the request path (Render's edge would
+    # close the idle upstream before gpt-oss:120b finished). Empty dict
+    # means pre-translation hasn't run / hasn't finished yet — the export
+    # falls back to synchronous, time-capped translation.
+    translations_he: Mapped[dict[str, str]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
 
 
 class ComparisonIssue(Base, TimestampMixin):

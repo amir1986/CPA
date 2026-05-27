@@ -19,6 +19,7 @@ import pytest
 
 from app.api.routes import comparisons as routes
 from app.llm.client import FakeLLM, reset_llm
+from app.services import comparison_translation as translation_svc
 
 
 @pytest.fixture(autouse=True)
@@ -84,14 +85,17 @@ async def test_translate_batches_parallel_survives_one_bad_batch(
     test isn't sensitive to asyncio scheduling within the gather.
     """
 
-    async def flaky(items):
+    async def flaky(items, *, per_batch_timeout=18.0):
         # The second batch starts at k8 — make that one explode.
         first_key = next(iter(items))
         if first_key.startswith("k8."):
             raise RuntimeError("second batch's LLM call exploded")
         return {k: f"HE:{v}" for k, v in items.items()}
 
-    monkeypatch.setattr(routes, "_translate_to_hebrew", flaky)
+    # The implementation now lives in app.services.comparison_translation
+    # and `_translate_batches_parallel` calls it via the module-local
+    # name, so we patch the call site (not the re-export on `routes`).
+    monkeypatch.setattr(translation_svc, "_translate_to_hebrew", flaky)
 
     # 3 batches of 8/8/4: keys k0..k7, k8..k15, k16..k19.
     flat = {f"k{i}.current_summary": f"v{i}" for i in range(20)}
@@ -123,10 +127,10 @@ async def test_translate_batches_parallel_swallows_base_exception(
     class FakePanic(BaseException):
         pass
 
-    async def panicking(items):
+    async def panicking(items, *, per_batch_timeout=18.0):
         raise FakePanic("simulated rust panic during translation")
 
-    monkeypatch.setattr(routes, "_translate_to_hebrew", panicking)
+    monkeypatch.setattr(translation_svc, "_translate_to_hebrew", panicking)
 
     flat = {"k.current_summary": "en source"}
     # The export route wraps this call in a `try / except BaseException`
@@ -143,3 +147,84 @@ async def test_translate_batches_parallel_swallows_base_exception(
     # If gather did swallow the BaseException, the output should at least
     # not corrupt the input dict (English fallback preserved).
     assert out["k.current_summary"] == "en source"
+
+
+# ─────────────── pre-translation cache helpers ───────────────
+
+
+class _StubIssue:
+    """Stand-in for a `ComparisonIssue` row — only the prose attributes
+    the flattener reads. The real model carries citations + ids; we just
+    need the fields ``_flatten_for_translation`` walks."""
+
+    def __init__(self, ident: str, **kwargs):
+        self.id = ident
+        self.current_summary = kwargs.get("current_summary")
+        self.gaap_summary = kwargs.get("gaap_summary")
+        self.ifrs_summary = kwargs.get("ifrs_summary")
+        self.differences = kwargs.get("differences")
+        self.conversion_impact = kwargs.get("conversion_impact")
+        self.gaap_verification = kwargs.get("gaap_verification")
+        self.ifrs_verification = kwargs.get("ifrs_verification")
+
+
+def test_flatten_for_translation_collects_rationale_and_prose() -> None:
+    """Run-level rationale lands under `_run.rationale`; per-issue fields
+    are keyed `<issue_id>.<prose_field>`. Empty / whitespace-only values
+    are skipped so the LLM doesn't waste tokens on blanks."""
+    issues = [
+        _StubIssue(
+            "abc",
+            current_summary="Revenue recognized when control transfers.",
+            gaap_summary="",  # skipped — empty
+            ifrs_summary="   ",  # skipped — whitespace
+            differences="GAAP differs from IFRS on EPS computation.",
+        ),
+        _StubIssue(
+            "def",
+            current_summary="Lease accounting follows ASC 842.",
+            conversion_impact="Right-of-use asset must be re-measured.",
+        ),
+    ]
+    flat = translation_svc._flatten_for_translation("Detected US GAAP.", issues)
+
+    assert flat["_run.rationale"] == "Detected US GAAP."
+    assert flat["abc.current_summary"] == "Revenue recognized when control transfers."
+    assert flat["abc.differences"] == "GAAP differs from IFRS on EPS computation."
+    assert flat["def.current_summary"] == "Lease accounting follows ASC 842."
+    assert flat["def.conversion_impact"] == "Right-of-use asset must be re-measured."
+    # Empty fields elided.
+    assert "abc.gaap_summary" not in flat
+    assert "abc.ifrs_summary" not in flat
+
+
+def test_flatten_for_translation_skips_blank_rationale() -> None:
+    """No `_run.rationale` key when the rationale is None or whitespace —
+    avoids round-tripping an empty string through the LLM."""
+    assert translation_svc._flatten_for_translation(None, []) == {}
+    assert translation_svc._flatten_for_translation("   ", []) == {}
+
+
+def test_translations_cover_requires_every_key() -> None:
+    """A partial cache must NOT count as covered — the export route falls
+    back to synchronous translation for missing keys, but only when this
+    check correctly identifies the gap."""
+    flat = {"a": "x", "b": "y", "c": "z"}
+
+    assert translation_svc.translations_cover({"a": "א", "b": "ב", "c": "ג"}, flat)
+    assert not translation_svc.translations_cover({"a": "א", "b": "ב"}, flat)
+    assert not translation_svc.translations_cover({}, flat)
+    assert not translation_svc.translations_cover(None, flat)
+
+
+def test_kick_pretranslation_no_running_loop_is_a_noop() -> None:
+    """Called from a sync context (e.g. a test, or an early-startup hook),
+    `kick_pretranslation` must not crash — it just logs and returns."""
+    import uuid
+    # If this raised, pytest would fail; the assertion is the lack of
+    # exception. We can't easily assert "no task scheduled" without
+    # reaching into the private set, but the no-loop branch is the one
+    # we care about — verify it's hit by ensuring the task set is unchanged.
+    before = len(translation_svc._PRETRANSLATION_TASKS)
+    translation_svc.kick_pretranslation(uuid.uuid4())
+    assert len(translation_svc._PRETRANSLATION_TASKS) == before

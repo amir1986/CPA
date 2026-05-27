@@ -45,6 +45,7 @@ from app.ingest_docs.extractors.pdf_text import (
 )
 from app.llm.client import LLMClient, get_llm
 from app.rag.query_engine import QueryAnswer, answer_question
+from app.services.comparison_translation import kick_pretranslation
 from app.storage.s3 import get_object_store
 
 logger = logging.getLogger(__name__)
@@ -664,6 +665,14 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
 
         run.status = ComparisonStatus.done
         await session.commit()
+
+    # Kick HE pre-translation off the request path so the eventual export
+    # serves Hebrew prose from cache instead of trying to translate during
+    # the request (Render's edge closes idle upstream connections at ~30 s
+    # and gpt-oss:120b's multi-batch translation routinely overruns that).
+    # Best-effort: failures just leave the cache empty and the export
+    # route's synchronous fallback handles it.
+    kick_pretranslation(run_id)
 
 
 def _derive_differences(gaap_ans: Any, ifrs_ans: Any) -> str | None:
