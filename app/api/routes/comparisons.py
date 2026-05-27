@@ -61,6 +61,7 @@ from app.services.comparison_translation import (
     _flatten_for_translation,
     _translate_batches_parallel,
     _translate_to_hebrew,
+    localize_boilerplate,
 )
 from app.services.comparisons_engagement import get_or_create_hidden_engagement
 from app.storage.paths import raw_key, s3_uri
@@ -553,15 +554,24 @@ async def _export_memo_impl(
                 fresh = dict(missing)
             translated = {**flat, **cache, **fresh}
         rationale_text = translated.get("_run.rationale", rationale_text)
+        # Boilerplate localization runs last so any LLM-translated value
+        # is kept verbatim (its English substrings no longer match), but
+        # canned phrases the LLM left in English — typically the
+        # "[synthesized from model knowledge — no standards retrieved]"
+        # marker and the verifier no-corpus sentence — get flipped to
+        # Hebrew deterministically. This is the only thing standing
+        # between a degraded translation and a half-English Hebrew PDF.
+        rationale_text = localize_boilerplate(rationale_text, locale) or rationale_text
 
     for i in issues:
-        per_issue_prose.append(
-            {
-                k: (translated.get(f"{i.id}.{k}", getattr(i, k)) if locale == "he"
-                    else getattr(i, k))
-                for k in PROSE_KEYS
-            }
-        )
+        prose: dict[str, str | None] = {
+            k: (translated.get(f"{i.id}.{k}", getattr(i, k)) if locale == "he"
+                else getattr(i, k))
+            for k in PROSE_KEYS
+        }
+        if locale == "he":
+            prose = {k: localize_boilerplate(v, locale) for k, v in prose.items()}
+        per_issue_prose.append(prose)
 
     # Assemble the memo body. Each section is wrapped individually so one
     # bad issue (e.g. citation row corrupted to a non-dict shape) can't
