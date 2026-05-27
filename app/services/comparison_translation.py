@@ -7,15 +7,26 @@ the LLM-generated prose: per-issue summaries, verifier output, the
 difference paragraph, the conversion-impact paragraph, and the run-level
 rationale.
 
-We translate via `gpt-oss:120b` over Ollama Cloud, batched and run in
-parallel so a multi-issue memo finishes in a handful of seconds rather
-than minute-plus serial. Two callers:
+We translate via `gpt-oss:120b` over Ollama Cloud. Translation runs
+per-field rather than as a single batched-JSON call: the batched-JSON
+approach reliably returned the input unchanged for ~half the fields in
+production (gpt-oss:120b treated the multi-key JSON as "preserve
+structure" and skipped the actual translation step on most values). The
+per-field flow uses a direct "translate this English to Hebrew" prompt,
+parallelizes across all fields via `asyncio.gather`, and rejects any
+response that doesn't actually contain Hebrew characters.
+
+Two callers:
 
 - ``pretranslate_run_to_hebrew`` — fires from the orchestrator the moment
-  a run flips to ``done``. Stores the resulting Hebrew strings on
-  ``ComparisonRun.translations_he`` so the eventual export request can
-  read from cache (instant, no LLM call). Generous timeouts (no Render
-  edge in this code path — it's a background task on the same worker).
+  a run flips to ``done``, and is re-kicked from ``get_run`` whenever a
+  done run is fetched with an incomplete cache. Stores the resulting
+  Hebrew strings on ``ComparisonRun.translations_he`` so the eventual
+  export request can read from cache (instant, no LLM call). Generous
+  timeouts (no Render edge in this code path — it's a background task on
+  the same worker). Idempotent partial-cache filler: each call only
+  re-sends MISSING keys to the LLM, successes merge into the existing
+  cache.
 
 - The export route — when ``translations_he`` is empty (user exported
   before pre-translation finished, or pre-translation failed), the
@@ -26,8 +37,8 @@ than minute-plus serial. Two callers:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+import re
 import uuid
 from collections.abc import Mapping
 
@@ -57,52 +68,137 @@ PROSE_KEYS: tuple[str, ...] = (
 )
 
 
-_TRANSLATE_PROMPT = """You are translating an accounting memo from English into Hebrew for a CPA partner. Translate accurately and naturally; preserve technical accounting terms (e.g. ASC 606, IFRS 15, EPS, deferred tax) but use Hebrew for everything else.
+# Matches any character in the Hebrew Unicode block (U+0590 to U+05FF).
+# Used to validate that the LLM actually translated the input — without
+# this check, gpt-oss:120b's failure mode (returning the English input
+# verbatim or with cosmetic edits) silently lands in the cache and the
+# user sees English body prose inside a Hebrew memo.
+_HEBREW_RE = re.compile(r"[֐-׿]")
 
-Translate the ENTIRE value for every key — including any bracketed markers like "[...]", parenthetical notes, and short fragments. Do NOT leave bracketed text in English: it is descriptive prose, not code. The only English you keep is technical accounting terms and standard names (ASC nnn, IFRS nn, IAS nn, EPS, FVOCI, etc.).
 
-Return STRICT JSON with the SAME keys as the input, each value translated. Do not add or drop keys. Do not include any prose outside the JSON.
+def _contains_hebrew(text: str) -> bool:
+    """True when ``text`` has at least one Hebrew character. Used as the
+    success signal for a translation — a "Hebrew" response with zero
+    Hebrew characters is the LLM failing to translate, not succeeding."""
+    return bool(_HEBREW_RE.search(text))
 
-INPUT:
-{input_json}
-"""
+
+_TRANSLATE_PROMPT = """Translate the following English accounting memo text into Hebrew.
+
+CRITICAL RULES:
+1. Your output MUST be in Hebrew. Every English word in narrative prose must become Hebrew.
+2. Keep these specific terms in English as-is: standard codes (ASC 606, ASC 326, IFRS 9, IFRS 15, IAS 39), abbreviations (EPS, FVOCI, ECL, CECL, EIR, NPV, GAAP), and proper nouns (FASB, IASB).
+3. Translate EVERYTHING else: every other English word, every bracketed phrase, every parenthetical note.
+4. Output ONLY the Hebrew translation, with no preamble, no explanations, no quotes around it, no markdown fences.
+
+ENGLISH TEXT:
+{text}
+
+HEBREW TRANSLATION:"""
+
+
+async def _translate_single_field(
+    text: str, *, timeout: float = 30.0,
+) -> str | None:
+    """Translate one English prose field to Hebrew via a direct (non-JSON)
+    LLM call. Returns the Hebrew string on success, or None when:
+
+      - the call timed out / raised,
+      - the LLM returned an empty string,
+      - the LLM returned text with no Hebrew characters (the failure mode
+        we hit in production: gpt-oss:120b would return the English input
+        with cosmetic edits and the code happily cached it as
+        "translated").
+
+    Returning None lets callers distinguish "translation failed, leave
+    the English source alone" from "translation succeeded, use this
+    Hebrew text" — a distinction the old batched-JSON path collapsed.
+    """
+    if not text or not text.strip():
+        return None
+    try:
+        from app.llm.client import get_llm
+        prompt = _TRANSLATE_PROMPT.format(text=text)
+        response = await asyncio.wait_for(
+            get_llm().complete(prompt), timeout=timeout,
+        )
+        out = (response.text or "").strip()
+        # Strip a leading markdown fence if the LLM ignored the rule.
+        if out.startswith("```"):
+            out = out.strip("`").strip()
+            for prefix in ("hebrew\n", "hebrew:", "he\n", "he:"):
+                if out.lower().startswith(prefix):
+                    out = out[len(prefix):].strip()
+                    break
+        # Strip an "HEBREW TRANSLATION:" preamble the model sometimes
+        # echoes back even though the prompt told it not to.
+        for label in ("HEBREW TRANSLATION:", "Hebrew translation:", "Hebrew:"):
+            if out.startswith(label):
+                out = out[len(label):].strip()
+        if not out:
+            logger.warning("translation returned empty text for input %r", text[:80])
+            return None
+        if not _contains_hebrew(out):
+            # The most common production failure: LLM echoes the input
+            # verbatim or rephrases it in English. Logging the truncated
+            # raw response makes the failure visible in Render logs so
+            # we can iterate on the prompt if it recurs.
+            logger.warning(
+                "translation produced no Hebrew characters; "
+                "input head=%r, response head=%r",
+                text[:80], out[:80],
+            )
+            return None
+        return out
+    except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
+        raise
+    except BaseException as exc:
+        logger.warning(
+            "single-field translation failed for input %r: %r",
+            text[:80], exc,
+        )
+        return None
 
 
 async def _translate_to_hebrew(
     items: dict[str, str], *, per_batch_timeout: float = 18.0,
 ) -> dict[str, str]:
-    """Batched LLM translation of memo prose fields. Empty / None values
-    short-circuit so the LLM only sees real text. On any failure we
-    return the original English so the export still completes."""
+    """Translate every value in ``items`` to Hebrew via parallel per-field
+    LLM calls.
+
+    Returns a dict with the same keys as ``items``. Values that translated
+    successfully are Hebrew; values whose LLM call failed or returned
+    non-Hebrew text fall back to the English source so the export can
+    still ship. Empty / whitespace-only values pass through unchanged so
+    the LLM only sees real text.
+
+    The function name is kept for backward compatibility with monkey-
+    patched tests; the implementation switched from batched-JSON to
+    per-field after the JSON path proved unreliable in production
+    (gpt-oss:120b returned the input unchanged for most multi-key
+    batches).
+
+    ``per_batch_timeout`` is the per-field timeout — the parameter name
+    is preserved so existing call sites don't need updating.
+    """
     nonempty = {k: v for k, v in items.items() if v and v.strip()}
     if not nonempty:
         return items
-    try:
-        from app.llm.client import get_llm
-        prompt = _TRANSLATE_PROMPT.format(input_json=json.dumps(nonempty, ensure_ascii=False))
-        response = await asyncio.wait_for(get_llm().complete(prompt), timeout=per_batch_timeout)
-        text = (response.text or "").strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.lower().startswith("json\n"):
-                text = text[5:]
-        start, end = text.find("{"), text.rfind("}")
-        if start >= 0 and end > start:
-            text = text[start : end + 1]
-        translated = json.loads(text)
-        # Merge with the original so empty values stay empty. Skip empty /
-        # whitespace-only translations — an LLM returning `""` for a field
-        # would otherwise wipe the English source and downstream truthy
-        # checks (`prose.get(key) or s["no_…_retrieved"]`) flip the memo to
-        # the "no retrieval" placeholder for a field we actually had.
-        out = dict(items)
-        for k, v in translated.items():
-            if isinstance(v, str) and v.strip() and k in out:
-                out[k] = v
-        return out
-    except Exception as exc:
-        logger.warning("memo translation failed (returning English): %r", exc)
-        return items
+    results = await asyncio.gather(
+        *(_translate_single_field(v, timeout=per_batch_timeout) for v in nonempty.values()),
+        return_exceptions=True,
+    )
+    out = dict(items)
+    for k, result in zip(nonempty.keys(), results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning("translation field raised %r — keeping English", result)
+            continue
+        if result is None:
+            # Failed / non-Hebrew — leave the English source in `out` so
+            # the boilerplate localizer at least handles the canned bits.
+            continue
+        out[k] = result
+    return out
 
 
 async def _translate_batches_parallel(
@@ -111,36 +207,20 @@ async def _translate_batches_parallel(
     *,
     per_batch_timeout: float = 18.0,
 ) -> dict[str, str]:
-    """Split a flat dict of strings into small batches and translate them
-    in parallel. Smaller batches finish faster on Ollama Cloud and let
-    `KeyRotator` spread load across multiple API keys — a single fat
-    batch was timing out at the edge proxy before the model returned.
+    """Translate a flat dict of prose fields in parallel.
 
-    Translation failures degrade per-batch: failed batches keep their
+    Historical signature kept for backward compatibility with existing
+    callers and tests. With the per-field implementation in
+    ``_translate_to_hebrew`` there's no longer a "batch" concept — each
+    field becomes its own concurrent LLM call internally — so this
+    function just delegates and the ``batch_size`` parameter is ignored.
+
+    Translation failures degrade per-field: failed fields keep their
     English values and the rest of the memo still ships in Hebrew.
-
-    ``return_exceptions=True`` keeps one batch's failure (rotator
-    exhausted, httpx connection broken mid-flight, JSON garbage that
-    escapes the inner-most try) from cancelling the rest of the gather.
     """
     if not flat:
         return flat
-    items = list(flat.items())
-    batches: list[dict[str, str]] = [
-        dict(items[i : i + batch_size]) for i in range(0, len(items), batch_size)
-    ]
-    results = await asyncio.gather(
-        *[_translate_to_hebrew(b, per_batch_timeout=per_batch_timeout) for b in batches],
-        return_exceptions=True,
-    )
-    out: dict[str, str] = dict(flat)
-    for batch, batch_out in zip(batches, results, strict=True):
-        if isinstance(batch_out, BaseException):
-            logger.warning("translation batch failed (keeping English): %r", batch_out)
-            continue
-        for k, v in batch_out.items():
-            out[k] = v
-    return out
+    return await _translate_to_hebrew(flat, per_batch_timeout=per_batch_timeout)
 
 
 def _flatten_for_translation(
