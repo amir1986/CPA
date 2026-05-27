@@ -99,7 +99,26 @@ test("download EN + HE PDFs through the UI", async ({ page }) => {
     console.log("[HE] no download fired — inspecting the error pill on the page");
     const err = await page.locator('[data-testid="export-controls"] .text-danger').innerText().catch(() => "");
     console.log(`[HE] error pill: ${err}`);
+    expect(err).toBe(""); // any pill text = export failed
   }
+
+  // Independent backend assertion. Regardless of whether the UI download
+  // event fired cleanly, POST /api/comparison/runs/{id}/export with
+  // locale=he MUST return 200 and a %PDF-prefixed body. If it doesn't,
+  // the user is seeing a 500 (the bug this test exists to guard against).
+  const heProbe = await page.evaluate(async (rid) => {
+    const r = await fetch(`/api/comparison/runs/${rid}/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format: "pdf", locale: "he" }),
+    });
+    const buf = await r.arrayBuffer();
+    const head = String.fromCharCode(...new Uint8Array(buf).slice(0, 8));
+    return { status: r.status, length: buf.byteLength, head };
+  }, done!.id);
+  console.log(`[HE probe] status=${heProbe.status} bytes=${heProbe.length} head=${heProbe.head}`);
+  expect(heProbe.status).toBe(200);
+  expect(heProbe.head.startsWith("%PDF")).toBeTruthy();
 
   console.log("\n=== export wire log ===");
   wire.forEach((line) => console.log(line));
