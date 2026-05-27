@@ -1,0 +1,29 @@
+{
+	auto_https off
+}
+
+:80 {
+	encode gzip zstd
+
+	# Backend API — strip the /api prefix before forwarding.
+	handle_path /api/* {
+		reverse_proxy api:8000 {
+			flush_interval -1
+			transport http {
+				read_timeout 5m
+				write_timeout 5m
+			}
+		}
+	}
+
+	# Everything else (UI, Auth.js routes, SSE proxy) → Next.js.
+	handle {
+		reverse_proxy web:3000 {
+			flush_interval -1
+			transport http {
+				read_timeout 5m
+				write_timeout 5m
+			}
+		}
+	}
+}

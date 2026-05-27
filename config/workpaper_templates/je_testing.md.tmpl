@@ -1,0 +1,35 @@
+# $title
+
+**Engagement:** $engagement_name
+**Period end:** $period_end
+**Prepared by:** $prepared_by
+**Date:** $generated_at
+
+## Objective
+
+To identify journal entries that exhibit characteristics consistent with
+management override of controls. Tests performed: Benford first-digit
+analysis, weekend / public-holiday postings, round-amount clustering,
+preparer == approver (SoD violation), late postings, and threshold
+(amounts above performance materiality).
+
+## Procedures performed
+
+- Obtained the general ledger for the period covering $period_start to $period_end.
+- Performed Benford 1st-digit test on the population of $entry_count entries.
+- Tested for postings on Saturday/Sunday and on listed public holidays.
+- Identified entries above the performance-materiality threshold of $performance_materiality.
+
+## Findings
+
+$findings_table
+
+## References
+
+- Population: GL entries from engagement $engagement_id (period_start=$period_start, period_end=$period_end).
+- Standards cited:
+$citations
+
+## Conclusion
+
+Findings above are subject to partner review. See linked Findings tracker.

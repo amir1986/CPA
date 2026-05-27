@@ -1,0 +1,179 @@
+services:
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    environment:
+      OLLAMA_API_KEYS: ${OLLAMA_API_KEYS:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-https://ollama.com}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gpt-oss:120b}
+      DATABASE_URL: postgresql+asyncpg://cpa:cpa@postgres:5432/cpa
+      QDRANT_URL: http://qdrant:6333
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: cpa
+      S3_SECRET_KEY: cpa-secret
+      S3_BUCKET: cpa
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me-please-32b}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_FROM: cpa@example.com
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CPA_LLM_BACKEND: ${CPA_LLM_BACKEND:-ollama}
+      CPA_VECTOR_BACKEND: ${CPA_VECTOR_BACKEND:-memory}
+      CPA_EMBED_BACKEND: ${CPA_EMBED_BACKEND:-hash}
+      CPA_EMAIL_SINK: ${CPA_EMAIL_SINK:-smtp}
+      CPA_AGENT_BACKEND: ${CPA_AGENT_BACKEND:-simple}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    expose:
+      - "8000"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: /api
+    restart: unless-stopped
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET:-dev-auth-secret-change-me-please-32b}
+      AUTH_URL: ${AUTH_URL:-http://localhost:8080}
+      AUTH_TRUST_HOST: "true"
+      INTERNAL_API_BASE: http://api:8000
+      NEXT_PUBLIC_API_BASE: /api
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    expose:
+      - "3000"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cpa
+      POSTGRES_PASSWORD: cpa
+      POSTGRES_DB: cpa
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cpa -d cpa"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.11.3
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: cpa
+      MINIO_ROOT_PASSWORD: cpa-secret
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 cpa cpa-secret &&
+      mc mb --ignore-existing local/cpa &&
+      mc anonymous set download local/cpa/public || true
+      "
+    restart: "no"
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # Run once to pull the standards corpus into Qdrant:
+  #     docker compose --profile ingest run --rm ingest [--source ID] [--full-resync]
+  ingest:
+    profiles: ["ingest"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    entrypoint: ["python", "-m", "app.ingest_standards.jobs.run_ingest"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cpa:cpa@postgres:5432/cpa
+      QDRANT_URL: http://qdrant:6333
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY: cpa
+      S3_SECRET_KEY: cpa-secret
+      S3_BUCKET: cpa
+      CPA_VECTOR_BACKEND: qdrant
+      LOG_LEVEL: INFO
+    depends_on:
+      qdrant:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  minio_data:
+  caddy_data:
+  caddy_config:

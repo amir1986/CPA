@@ -1,0 +1,95 @@
+/*
+ * Design tokens — CSS custom properties for color, radius, shadow, spacing,
+ * motion and typography. Light is default; dark is applied via
+ * `data-theme="dark"` on <html> (next-themes).
+ *
+ * Tokens are referenced from tailwind.config.ts so utility classes like
+ * `bg-bg`, `text-fg-muted`, `border-border-strong` resolve through them.
+ */
+
+:root {
+  /* ── Color (light) ── */
+  --c-bg: #ffffff;
+  --c-bg-elev: #f8fafc;
+  --c-bg-overlay: rgba(15, 23, 42, 0.04);
+  --c-fg: #0f172a;
+  --c-fg-muted: #475569;
+  --c-fg-subtle: #94a3b8;
+  --c-border: #e2e8f0;
+  --c-border-strong: #cbd5e1;
+  --c-brand: #2563eb;
+  --c-brand-fg: #ffffff;
+  --c-success: #16a34a;
+  --c-warning: #d97706;
+  --c-danger: #dc2626;
+  --c-info: #0284c7;
+  --c-anomaly: #c026d3;
+  --c-trend-up: #16a34a;
+  --c-trend-down: #dc2626;
+  --c-refusal: #b45309;
+
+  /* ── Radii ── */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 9999px;
+  --radius-card: var(--radius-lg);
+  --radius-input: var(--radius-md);
+
+  /* ── Elevation ── */
+  --elev-1: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --elev-2: 0 2px 6px rgba(15, 23, 42, 0.08);
+  --elev-3: 0 4px 12px rgba(15, 23, 42, 0.10);
+  --elev-4: 0 8px 24px rgba(15, 23, 42, 0.12);
+
+  /* ── Typography ── */
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --font-heebo: "Heebo", var(--font-sans);
+
+  /* ── Motion ── */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* ── Focus ring ── */
+  --c-focus: var(--c-brand);
+}
+
+[data-theme="dark"] {
+  --c-bg: #0b1220;
+  --c-bg-elev: #131c2f;
+  --c-bg-overlay: rgba(255, 255, 255, 0.04);
+  --c-fg: #e6edf7;
+  --c-fg-muted: #98a2b3;
+  --c-fg-subtle: #667085;
+  --c-border: #1e293b;
+  --c-border-strong: #334155;
+  --c-brand: #60a5fa;
+  --c-brand-fg: #0b1220;
+  --c-success: #34d399;
+  --c-warning: #fbbf24;
+  --c-danger: #f87171;
+  --c-info: #38bdf8;
+  --c-anomaly: #e879f9;
+  --c-trend-up: #34d399;
+  --c-trend-down: #f87171;
+  --c-refusal: #fbbf24;
+
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --elev-2: 0 2px 6px rgba(0, 0, 0, 0.36);
+  --elev-3: 0 4px 12px rgba(0, 0, 0, 0.40);
+  --elev-4: 0 8px 24px rgba(0, 0, 0, 0.44);
+}
+
+/* Reduced-motion honors user preference. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+    --dur-slow: 0ms;
+  }
+}

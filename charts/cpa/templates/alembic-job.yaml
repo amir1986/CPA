@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cpa.fullname" . }}-alembic
+  labels:
+    {{- include "cpa.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alembic
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        {{- toYaml .Values.api.podSecurityContext | nindent 8 }}
+      containers:
+        - name: alembic
+          image: {{ include "cpa.api.image" . }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - secretRef:
+                name: {{ default (printf "%s-api" (include "cpa.fullname" .)) .Values.secrets.existingSecret }}
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "1Gi" }

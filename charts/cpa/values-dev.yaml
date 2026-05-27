@@ -1,0 +1,44 @@
+## Dev / kind values — everything in-chart for a one-shot smoke install.
+
+ingress:
+  host: cpa.local
+  className: nginx
+  tls:
+    enabled: false
+
+api:
+  replicas: 1
+  hpa:
+    enabled: false
+  resources:
+    requests: { cpu: "200m", memory: "512Mi" }
+    limits:   { cpu: "1",    memory: "2Gi" }
+
+web:
+  replicas: 1
+  hpa:
+    enabled: false
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+
+postgres:
+  enabled: true
+  storage: 5Gi
+
+minio:
+  enabled: true
+  storage: 10Gi
+
+qdrant:
+  enabled: true
+  storage: 5Gi
+
+serviceMonitor:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+
+ingest:
+  enabled: false

@@ -1,0 +1,176 @@
+[project]
+name = "cpa"
+version = "0.1.0"
+description = "CPA AI Assistant — knowledge + books + analysis + audit"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { file = "LICENSE" }
+
+# Lean core — boots the app, serves /healthz /readyz /auth/* /engagements/*
+# /query (with refusal when corpus is empty), and SSE. Heavy / feature-
+# specific deps live in optional groups below and are pulled in only when
+# you need them. This keeps the free-tier Render install under ~150 MB
+# peak so the 512 MB build stays under the OOM threshold.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "httpx>=0.27",
+    "structlog>=24.4",
+    "python-json-logger>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "bcrypt>=4.2",
+    "pyjwt>=2.9",
+    "aiosmtplib>=3.0",
+    "email-validator>=2.2",
+    "slowapi>=0.1.9",
+    "tenacity>=9.0",
+    "orjson>=3.10",
+    "qdrant-client>=1.11",
+    "python-multipart>=0.0.9",
+    # USGAAP <> IFRS uploads need PDF/DOCX/XLSX extraction. Kept in core
+    # rather than [parse] extras because Render's blueprint sync was
+    # silently ignoring our buildCommand change to install extras — moving
+    # these to core guarantees they install on every deploy.
+    "openpyxl>=3.1",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    # PDF generation for the memo export. fpdf2 is pure-Python and supports
+    # Hebrew via system TTFs (e.g. /usr/share/fonts/truetype/dejavu/), so we
+    # don't need WeasyPrint's heavy cairo/pango stack on Render's free tier.
+    "fpdf2>=2.7",
+    # Hebrew / Arabic right-to-left visual reordering for the PDF renderer
+    # (logical → display order). Pure Python, no system deps.
+    "python-bidi>=0.6",
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
+    "prometheus-client>=0.20",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# LlamaIndex ReActAgent backend. Only needed when CPA_AGENT_BACKEND=llamaindex.
+# The simple JSON tool-call loop (default for free deploys) needs none of this.
+agent = ["llama-index-core>=0.12"]
+
+# Per-engagement document parsers + bank-recon fuzzy matcher.
+# Excel TB/GL ingest needs `openpyxl`; PDF text needs `pdfplumber`;
+# bank reconciliation needs `rapidfuzz`; Hebrew PDFs need `python-bidi`.
+parse = [
+    "openpyxl>=3.1",
+    "pdfplumber>=0.11",
+    "python-bidi>=0.6",
+    "python-docx>=1.1",
+    "rapidfuzz>=3.10",
+    "workalendar>=17.0",
+]
+
+# Standards-corpus HTTP crawl.
+crawl = [
+    "trafilatura>=1.12",
+    "selectolax>=0.3",
+]
+
+# Real S3/MinIO storage. With CPA_S3_BACKEND=memory (the free-deploy default)
+# uploads land in process memory and survive only until the next restart —
+# fine for a demo. Install [s3] when you wire Cloudflare R2 / AWS S3.
+s3 = ["aioboto3>=13.0"]
+
+# Heavy ML stack — only needed when CPA_EMBED_BACKEND=e5. Free-tier hosts
+# should NOT install this; the HashEmbedder default fits.
+ml = [
+    "sentence-transformers>=3.0",
+    "llama-index-embeddings-huggingface>=0.3",
+]
+
+ocr = ["pytesseract>=0.3.13", "pdf2image>=1.17", "Pillow>=10.4"]
+pdf = ["weasyprint>=62.0"]
+
+# Everything: pulls every feature group. Use locally / on Starter+ plans.
+all = [
+    "cpa[agent,parse,crawl,s3,ml,ocr,pdf]",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "testcontainers[postgres,minio,generic]>=4.8",
+    "schemathesis>=3.36",
+    "pre-commit>=3.8",
+    "freezegun>=1.5",
+    "respx>=0.21",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+# Include non-Python assets shipped inside the app/ package — currently just
+# the bundled DejaVu Sans TTF used by the workpaper PDF renderer for Hebrew /
+# CJK glyph support without depending on host fonts.
+[tool.hatch.build.targets.wheel.force-include]
+"app/audit/workpapers/fonts/DejaVuSans.ttf" = "app/audit/workpapers/fonts/DejaVuSans.ttf"
+"app/audit/workpapers/fonts/DejaVuSans-Bold.ttf" = "app/audit/workpapers/fonts/DejaVuSans-Bold.ttf"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",          # pycodestyle / pyflakes
+    "I",                     # isort
+    "B",                     # bugbear
+    "UP",                    # pyupgrade
+    "SIM",                   # simplify
+    "RUF",                   # ruff
+]
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # function call in default arg — FastAPI's Depends()/Header() pattern
+    "UP042",  # str-enum (we use class Enum(str, Enum) intentionally for clarity)
+    "UP035",  # deprecated-import warnings on typing — too noisy across pre-3.10 patterns
+    "SIM102", # collapsible-if — readability tradeoff
+    "SIM108", # if-else → ternary — sometimes the if-else is clearer
+    "SIM117", # nested with — async with patterns
+    "B007",   # unused loop variable — legitimate when iterating for side effect
+    "RUF001", # ambiguous unicode — we use em-dashes intentionally
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B018", "B905", "E731", "F841", "SIM103", "SIM105"]
+"migrations/**" = ["E402", "F401"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+exclude = ["migrations/"]
+
+[[tool.mypy.overrides]]
+module = ["workalendar.*", "trafilatura.*", "selectolax.*", "pdfplumber.*", "pdf2image.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: integration tests (require Docker)",
+    "e2e: end-to-end tests (require full compose stack)",
+]

@@ -1,0 +1,29 @@
+# IFRS-flavored Chart of Accounts template (very close to GAAP at this level).
+
+accounts:
+  - { code: "1000", name: "Cash and cash equivalents", type: asset }
+  - { code: "1100", name: "Trade and other receivables", type: asset }
+  - { code: "1200", name: "Inventories", type: asset }
+  - { code: "1500", name: "Property, plant and equipment", type: asset }
+  - { code: "1600", name: "Accumulated depreciation", type: asset }
+  - { code: "1700", name: "Intangible assets and goodwill", type: asset }
+  - { code: "1800", name: "Right-of-use assets", type: asset }
+
+  - { code: "2000", name: "Trade and other payables", type: liability }
+  - { code: "2100", name: "Accruals", type: liability }
+  - { code: "2200", name: "Short-term borrowings", type: liability }
+  - { code: "2500", name: "Long-term borrowings", type: liability }
+  - { code: "2700", name: "Lease liabilities", type: liability }
+
+  - { code: "3000", name: "Share capital", type: equity }
+  - { code: "3100", name: "Share premium", type: equity }
+  - { code: "3500", name: "Retained earnings", type: equity }
+
+  - { code: "4000", name: "Revenue from contracts with customers", type: revenue }
+  - { code: "4900", name: "Other operating income", type: revenue }
+
+  - { code: "5000", name: "Cost of sales", type: expense }
+  - { code: "6000", name: "Employee benefits expense", type: expense }
+  - { code: "6500", name: "Depreciation and amortisation", type: expense }
+  - { code: "7000", name: "Finance costs", type: expense }
+  - { code: "8000", name: "Income tax expense", type: expense }

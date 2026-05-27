@@ -1,0 +1,37 @@
+# Default US-GAAP-flavored Chart of Accounts template.
+# Used to bootstrap an engagement; users edit afterward.
+
+accounts:
+  # ASSETS — 1000–1999
+  - { code: "1000", name: "Cash and cash equivalents", type: asset }
+  - { code: "1100", name: "Accounts receivable", type: asset }
+  - { code: "1200", name: "Inventory", type: asset }
+  - { code: "1500", name: "Property, plant and equipment", type: asset }
+  - { code: "1600", name: "Accumulated depreciation", type: asset }
+  - { code: "1700", name: "Intangible assets", type: asset }
+
+  # LIABILITIES — 2000–2999
+  - { code: "2000", name: "Accounts payable", type: liability }
+  - { code: "2100", name: "Accrued expenses", type: liability }
+  - { code: "2200", name: "Short-term debt", type: liability }
+  - { code: "2500", name: "Long-term debt", type: liability }
+  - { code: "2600", name: "Deferred tax liability", type: liability }
+
+  # EQUITY — 3000–3999
+  - { code: "3000", name: "Common stock", type: equity }
+  - { code: "3100", name: "Additional paid-in capital", type: equity }
+  - { code: "3500", name: "Retained earnings", type: equity }
+
+  # REVENUE — 4000–4999
+  - { code: "4000", name: "Revenue — product sales", type: revenue }
+  - { code: "4100", name: "Revenue — services", type: revenue }
+  - { code: "4900", name: "Other income", type: revenue }
+
+  # EXPENSES — 5000–8999
+  - { code: "5000", name: "Cost of goods sold", type: expense }
+  - { code: "6000", name: "Salaries and wages", type: expense }
+  - { code: "6100", name: "Rent", type: expense }
+  - { code: "6200", name: "Utilities", type: expense }
+  - { code: "6500", name: "Depreciation expense", type: expense }
+  - { code: "7000", name: "Professional fees", type: expense }
+  - { code: "8000", name: "Income tax expense", type: expense }

@@ -1,0 +1,70 @@
+{{- if .Values.ingest.enabled -}}
+{{- $imgRepo := .Values.api.image.repository -}}
+{{- $imgTag := default .Chart.AppVersion .Values.api.image.tag -}}
+{{- $secretName := default (printf "%s-api" (include "cpa.fullname" .)) .Values.secrets.existingSecret -}}
+{{- $fullname := include "cpa.fullname" . -}}
+{{- $sources := .Values.ingest.sources -}}
+{{- $podSecCtx := .Values.api.podSecurityContext -}}
+{{- $labels := include "cpa.labels" . -}}
+
+{{- define "cpa.ingest.podSpec" -}}
+restartPolicy: OnFailure
+containers:
+  - name: ingest
+    image: "{{ .imgRepo }}:{{ .imgTag }}"
+    imagePullPolicy: IfNotPresent
+    command: ["python", "-m", "app.ingest_standards.jobs.run_ingest"]
+    args:
+      {{- range .sources }}
+      - "--source"
+      - {{ . | quote }}
+      {{- end }}
+    envFrom:
+      - secretRef:
+          name: {{ .secretName }}
+    env:
+      - name: CPA_VECTOR_BACKEND
+        value: "qdrant"
+    resources:
+      requests: { cpu: "200m", memory: "512Mi" }
+      limits:   { cpu: "1",    memory: "2Gi" }
+{{- end -}}
+
+{{- if .Values.ingest.schedule }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $fullname }}-ingest
+  labels:
+    {{- $labels | nindent 4 }}
+    app.kubernetes.io/component: ingest
+spec:
+  schedule: {{ .Values.ingest.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          {{- include "cpa.ingest.podSpec" (dict "imgRepo" $imgRepo "imgTag" $imgTag "secretName" $secretName "sources" $sources) | nindent 10 }}
+{{- else }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullname }}-ingest
+  labels:
+    {{- $labels | nindent 4 }}
+    app.kubernetes.io/component: ingest
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      {{- include "cpa.ingest.podSpec" (dict "imgRepo" $imgRepo "imgTag" $imgTag "secretName" $secretName "sources" $sources) | nindent 6 }}
+{{- end -}}
+{{- end -}}
