@@ -61,6 +61,7 @@ from app.services.comparison_translation import (
     _flatten_for_translation,
     _translate_batches_parallel,
     _translate_to_hebrew,
+    kick_pretranslation,
     localize_boilerplate,
 )
 from app.services.comparisons_engagement import get_or_create_hidden_engagement
@@ -328,6 +329,22 @@ async def get_run(
 ) -> RunOut:
     run = await _load_run(run_id, principal, session)
     issues = await _issues_for(run.id, session)
+    # Auto-retry Hebrew pre-translation for a done run whose cache is
+    # missing or incomplete. The original `kick_pretranslation` at
+    # orchestrator-completion time is best-effort and can fail silently
+    # (Ollama Cloud transient, worker restart, slow key). Without this
+    # retry path, a single failure leaves the cache empty forever and
+    # every export degrades to English body prose. Re-kicking here is
+    # idempotent: `pretranslate_run_to_hebrew` short-circuits when the
+    # cache already covers every prose key, and only re-sends MISSING
+    # keys to the LLM otherwise.
+    if run.status == ComparisonStatus.done:
+        flat = _flatten_for_translation(
+            run.rationale, list(issues),
+        )
+        cache = run.translations_he or {}
+        if flat and not all(k in cache for k in flat):
+            kick_pretranslation(run.id)
     names: list[str] = []
     for fid in run.file_ids:
         f = await session.get(File, uuid.UUID(fid))
@@ -525,10 +542,20 @@ async def _export_memo_impl(
             # returning a text/plain 500 that bypasses every exception
             # handler. Pre-seed `translated` with whatever the cache
             # does have so we don't re-translate it.
+            #
+            # Also fire off pre-translation in the background. The sync
+            # call below might degrade keys to English under the 22s
+            # cap; the background task uses the longer 90s per-batch
+            # budget and persists whatever it manages to translate, so
+            # the user's NEXT export hits a fuller cache. This is the
+            # auto-retry loop that gets a slow run's Hebrew memo to 100%
+            # over a couple of export attempts instead of staying half-
+            # English forever.
+            kick_pretranslation(run.id)
             missing = {k: v for k, v in flat.items() if k not in cache}
             try:
                 fresh = await asyncio.wait_for(
-                    _translate_batches_parallel(missing, batch_size=4),
+                    _translate_batches_parallel(missing, batch_size=2),
                     timeout=22.0,
                 )
             except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):

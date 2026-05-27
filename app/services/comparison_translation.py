@@ -196,9 +196,13 @@ async def pretranslate_run_to_hebrew(run_id: uuid.UUID) -> None:
     batch LLM timeout is the only bound — slow but eventually-successful
     translations are exactly the case we want to capture here.
 
-    Idempotent: short-circuits if the cache is already populated. Failures
-    are logged and the cache is left empty; the export route's synchronous
-    fallback will then translate on-demand under its tight wall-clock cap.
+    Idempotent: short-circuits when the existing cache already covers
+    every prose key. When the cache is partial (a previous attempt
+    translated some batches but not others), only the MISSING keys are
+    re-sent to the LLM — successful translations are preserved across
+    retries and each call moves us closer to a fully-Hebrew cache.
+    Failures on the missing set are logged and the cache is left as-is;
+    the next call (kicked from `get_run`) tries again.
     """
     try:
         factory = get_sessionmaker()
@@ -209,9 +213,6 @@ async def pretranslate_run_to_hebrew(run_id: uuid.UUID) -> None:
                 return
             if run.status != ComparisonStatus.done:
                 # Don't pre-translate a failed or in-flight run.
-                return
-            if run.translations_he:
-                # Already cached (likely a retry).
                 return
 
             issues = list(
@@ -227,49 +228,65 @@ async def pretranslate_run_to_hebrew(run_id: uuid.UUID) -> None:
             if not flat:
                 return
 
-            # Wider per-batch timeout than the request-path fallback —
-            # 60 s comfortably covers gpt-oss:120b's worst-case latency
-            # on a cold Ollama Cloud key without risking an edge timeout
-            # (there's no client connection open here).
+            # Resume from any prior partial translation. `cache` is the
+            # existing Hebrew dict (may cover some keys but not all);
+            # `missing` is what we still need to translate. Short-circuit
+            # when the cache already covers everything — no LLM call
+            # needed at all.
+            cache: dict[str, str] = dict(run.translations_he or {})
+            missing = {k: v for k, v in flat.items() if k not in cache}
+            if not missing:
+                return
+
+            # Small batches + a generous per-batch timeout. The bottleneck
+            # is gpt-oss:120b's cold-start on a fresh Ollama Cloud API
+            # key — at batch_size=4 a single slow batch took the entire
+            # 60 s budget; at batch_size=2 the same memo finishes in
+            # under 30 s wall-clock because the slow key only ties up
+            # one batch, the other batches finish on faster keys and
+            # the rotator naturally load-balances. 90 s per-batch
+            # absorbs the worst-case cold-key latency without giving up.
             translated = await _translate_batches_parallel(
-                flat, batch_size=4, per_batch_timeout=60.0,
+                missing, batch_size=2, per_batch_timeout=90.0,
             )
 
-            # Only persist keys whose translation actually changed —
-            # identity-mapped values mean the batch failed and degraded
-            # to English; we want the export route to try again on the
-            # request path rather than serve a half-Hebrew memo from
-            # cache forever.
-            #
-            # Also run `localize_boilerplate` on each translated value
-            # so any canned English fragment the LLM left intact (the
-            # synthesis marker, the verifier no-corpus sentence) gets
-            # flipped to Hebrew before we persist. Without this, a
-            # partially-translated value lands in the cache, the export
-            # path serves it from cache (skipping the sync fallback),
-            # and the user sees English fragments inside a Hebrew memo.
-            real: dict[str, str] = {}
+            # Merge translations into the existing cache. Only keys whose
+            # translation actually changed (i.e. didn't degrade to the
+            # English source) are persisted — that way a future call to
+            # `pretranslate_run_to_hebrew` will re-attempt the missing
+            # keys on a hopefully-warmer key. Also run
+            # `localize_boilerplate` on each translated value so any
+            # canned English fragment the LLM left intact (the synthesis
+            # marker, the verifier no-corpus sentence) gets flipped to
+            # Hebrew before we persist. Without this, a partially-
+            # translated value lands in the cache, the export path
+            # serves it from cache (skipping the sync fallback), and the
+            # user sees English fragments inside a Hebrew memo.
+            added = 0
             for k, v in translated.items():
-                src = flat.get(k)
+                src = missing.get(k)
                 if v and isinstance(v, str) and v != src:
-                    real[k] = localize_boilerplate(v, "he") or v
-            if not real:
+                    cache[k] = localize_boilerplate(v, "he") or v
+                    added += 1
+            if not added:
                 logger.warning(
-                    "pretranslate: no fields translated for run %s "
-                    "(all batches degraded to English)",
-                    run_id,
+                    "pretranslate: 0 new keys for run %s "
+                    "(all %d missing batches degraded to English; "
+                    "%d already cached)",
+                    run_id, len(missing), len(run.translations_he or {}),
                 )
                 return
 
-            run.translations_he = real
+            run.translations_he = cache
             # JSONB columns aren't auto-dirtied on in-place mutations;
             # explicit flag covers the case where SQLAlchemy's change
             # detector misses the reassignment via attribute set.
             flag_modified(run, "translations_he")
             await session.commit()
             logger.info(
-                "pretranslate: cached %d/%d HE translations for run %s",
-                len(real), len(flat), run_id,
+                "pretranslate: cached %d new HE translations for run %s "
+                "(%d/%d total covered)",
+                added, run_id, len(cache), len(flat),
             )
     except (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit):
         raise
