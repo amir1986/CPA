@@ -27,6 +27,7 @@ from app.services.comparison_orchestrator import (
     _build_corpus,
     _citation_dicts,
     _confidence_of,
+    _consensus,
     _derive_differences,
     _detect_and_identify,
     _detect_with_confidence,
@@ -378,20 +379,69 @@ async def test_detect_with_confidence_returns_attempt_that_reaches_target() -> N
 
 
 @pytest.mark.asyncio
-async def test_detect_with_confidence_keeps_best_when_target_never_reached() -> None:
-    """When no attempt reaches the target, the loop exhausts max_attempts and
-    returns the HIGHEST-confidence attempt (0.65), not the last one (0.62)."""
+async def test_detect_with_confidence_majority_vote_no_boost_when_contested() -> None:
+    """Contested attempts (frameworks disagree) get NO consensus boost: the
+    loop exhausts max_attempts and returns the MODAL framework (US, 2 votes)
+    with its own best confidence — disagreement reads as lower certainty."""
     llm = _SequenceLLM([
         {"detected_framework": "US", "confidence": 0.6, "issues": []},
-        {"detected_framework": "IFRS", "confidence": 0.65, "issues": []},
-        {"detected_framework": "US", "confidence": 0.62, "issues": []},
+        {"detected_framework": "US", "confidence": 0.7, "issues": []},
+        {"detected_framework": "IFRS", "confidence": 0.8, "issues": []},
     ])
     result = await _detect_with_confidence(
         "corpus", valid_chunk_ids=set(), llm=llm, target_confidence=0.95, max_attempts=3,
     )
-    assert result["confidence"] == 0.65
-    assert result["detected_framework"] == "IFRS"
+    # US won the vote 2-1; no boost because the passes disagreed.
+    assert result["detected_framework"] == "US"
+    assert result["confidence"] == 0.7
     assert len(llm.prompts) == 3
+
+
+@pytest.mark.asyncio
+async def test_detect_with_confidence_consensus_boost_reaches_target() -> None:
+    """Unanimous agreement across attempts lifts confidence to the target
+    even when each pass self-reports below it. Three passes all pick IFRS at
+    0.85 → consensus 0.85 + 0.15·(2/3) = 0.95 → early exit on the 3rd."""
+    llm = _SequenceLLM([
+        {"detected_framework": "IFRS", "confidence": 0.85, "issues": []},
+        {"detected_framework": "IFRS", "confidence": 0.85, "issues": []},
+        {"detected_framework": "IFRS", "confidence": 0.85, "issues": []},
+        {"detected_framework": "IFRS", "confidence": 0.85, "issues": []},
+    ])
+    result = await _detect_with_confidence(
+        "corpus", valid_chunk_ids=set(), llm=llm, target_confidence=0.95, max_attempts=4,
+    )
+    assert result["detected_framework"] == "IFRS"
+    assert result["confidence"] >= 0.95
+    # Cleared the bar via consensus on the 3rd attempt — no 4th call needed.
+    assert len(llm.prompts) == 3
+
+
+def test_consensus_unanimous_boosts_contested_does_not() -> None:
+    """The `_consensus` aggregator: unanimous agreement closes part of the gap
+    to 1.0; a contested set returns the modal attempt's raw confidence."""
+    unanimous = [
+        {"detected_framework": "IFRS", "confidence": 0.8},
+        {"detected_framework": "IFRS", "confidence": 0.85},
+    ]
+    carrier, conf = _consensus(unanimous)
+    assert carrier is not None and carrier["detected_framework"] == "IFRS"
+    # base 0.85 + (1-0.85)*(1/2) = 0.925.
+    assert abs(conf - 0.925) < 1e-9
+
+    contested = [
+        {"detected_framework": "US", "confidence": 0.9},
+        {"detected_framework": "IFRS", "confidence": 0.6},
+    ]
+    carrier, conf = _consensus(contested)
+    # US wins on summed confidence; no boost on a split.
+    assert carrier is not None and carrier["detected_framework"] == "US"
+    assert conf == 0.9
+
+    # Never claims absolute certainty.
+    many = [{"detected_framework": "IFRS", "confidence": 0.99} for _ in range(8)]
+    _, conf = _consensus(many)
+    assert conf <= 0.99
 
 
 @pytest.mark.asyncio

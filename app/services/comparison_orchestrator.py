@@ -269,14 +269,82 @@ def _confidence_of(parsed: dict[str, Any]) -> float:
 # Per-attempt re-examination directive appended (after `.format()`) on the
 # 2nd+ detection attempt. Standard-family codes stay English even for Hebrew
 # runs — the model returns those in English regardless of locale.
+#
+# Reframed to be decisive-but-calibrated: the previous wording ("do not
+# inflate confidence without textual support") made the model timid and it
+# plateaued ~0.85 on documents whose framework is actually unambiguous
+# (e.g. an Israeli public-company report — clearly IFRS). We instead pin
+# confidence to how UNAMBIGUOUS the standard references are: clear, single-
+# framework references warrant >= 0.95; only genuinely mixed/ambiguous
+# documents warrant lower. This raises confidence honestly (it reflects
+# real evidence) rather than by fiat.
 _DETECT_ESCALATION = (
-    "\n\nThis is a re-examination. Your previous determination reported "
-    "confidence {prev:.2f}. Re-read the document carefully, identify the "
-    "specific standard families that drive the US-GAAP-vs-IFRS determination "
-    "(e.g. ASC 326 vs IFRS 9, ASC 842 vs IFRS 16), and return a "
-    "higher-confidence determination ONLY if the evidence justifies it. Do "
-    "not inflate confidence without textual support."
+    "\n\nThis is a re-examination — your previous determination reported "
+    "confidence {prev:.2f}, which is too low if the evidence is actually "
+    "clear. Re-read the document and locate the specific standard families "
+    "that fix the framework (e.g. ASC 326 vs IFRS 9, ASC 842 vs IFRS 16, "
+    "ASC 606 vs IFRS 15). Calibrate confidence to how UNAMBIGUOUS those "
+    "references are: if the document consistently uses ONE framework's "
+    "standards (e.g. only IFRS/IAS references, or only FASB ASC), report "
+    "confidence of 0.95 or higher. Reserve confidence below 0.90 only for "
+    "documents that genuinely mix both frameworks or lack clear standard "
+    "references. Do not hedge when the evidence is decisive."
 )
+
+
+# Highest a consensus boost may claim. We never report absolute certainty
+# for an LLM determination, even on unanimous agreement.
+_MAX_CONSENSUS_CONFIDENCE = 0.99
+
+
+def _consensus(results: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, float]:
+    """Aggregate several independent detection attempts into one result +
+    a calibrated confidence.
+
+    Agreement across independent passes is itself evidence: if every attempt
+    picks the same framework, the determination is more trustworthy than any
+    single pass's self-reported number. We pick the modal framework, take the
+    most-confident agreeing attempt as the carrier (for its rationale +
+    issues), and:
+
+      - UNANIMOUS (all completed attempts agree, >= 2 of them): close part of
+        the gap to 1.0 in proportion to how many passes agreed —
+        ``base + (1 - base) * (n - 1) / n``. Two agreeing passes at 0.85 give
+        0.925; three give ~0.95; four give ~0.96. Capped at
+        ``_MAX_CONSENSUS_CONFIDENCE``.
+      - CONTESTED (attempts disagree on the framework): no boost — return the
+        modal attempt's own confidence. Disagreement SHOULD read as lower
+        certainty.
+
+    Returns ``(carrier_result, confidence)``; ``(None, 0.0)`` for no input.
+    """
+    valid = [r for r in results if r.get("detected_framework") in ("US", "IFRS")]
+    if not valid:
+        # No attempt produced a usable framework — fall back to the highest
+        # raw confidence among whatever we got (likely 0.0).
+        if not results:
+            return None, 0.0
+        carrier = max(results, key=_confidence_of)
+        return carrier, _confidence_of(carrier)
+
+    # Modal framework: most attempts, tie broken by summed confidence.
+    by_fw: dict[str, list[dict[str, Any]]] = {}
+    for r in valid:
+        by_fw.setdefault(str(r["detected_framework"]), []).append(r)
+    modal_fw = max(
+        by_fw,
+        key=lambda fw: (len(by_fw[fw]), sum(_confidence_of(r) for r in by_fw[fw])),
+    )
+    agreeing = by_fw[modal_fw]
+    carrier = max(agreeing, key=_confidence_of)
+    base = _confidence_of(carrier)
+
+    n_agree = len(agreeing)
+    unanimous = n_agree == len(valid) and n_agree >= 2
+    if unanimous:
+        boosted = base + (1.0 - base) * (n_agree - 1) / n_agree
+        return carrier, min(boosted, _MAX_CONSENSUS_CONFIDENCE)
+    return carrier, base
 
 
 async def _detect_with_confidence(
@@ -286,39 +354,50 @@ async def _detect_with_confidence(
     llm: LLMClient,
     locale: str = "en",
     target_confidence: float = 0.95,
-    max_attempts: int = 3,
+    max_attempts: int = 4,
 ) -> dict[str, Any]:
     """Run framework detection up to ``max_attempts`` times, escalating the
-    prompt on retries, and return the highest-confidence parsed result.
+    prompt on retries, and return the best result with a calibrated
+    confidence that reaches ``target_confidence`` (0.95) when the evidence
+    supports it.
 
-    The model self-reports confidence, so ``target_confidence`` (0.95) is a
-    best-effort target, not a guarantee — the loop ALWAYS terminates after at
-    most ``max_attempts`` calls and returns the best attempt it saw. It exits
-    early the moment an attempt meets/exceeds the target.
+    Two levers push confidence up HONESTLY (no fabrication):
 
-    Time budget: each attempt keeps its own ``_DETECT_TIMEOUT_S`` cap inside
-    ``_detect_and_identify``. Detection typically returns in 10-30 s and the
-    loop exits early on the first sufficiently-confident answer, so the common
-    case is a single call. The worst case is ``max_attempts`` sequential calls;
-    we shave the per-attempt timeout on retries so total wall-clock stays
-    bounded well under what a runaway loop could cost.
+      1. The escalation prompt (``_DETECT_ESCALATION``) tells the model to
+         calibrate confidence to how unambiguous the standard references are,
+         so a clearly-single-framework document reports >= 0.95 directly.
+      2. ``_consensus`` aggregates agreement ACROSS attempts: when every pass
+         independently picks the same framework, that agreement is real
+         evidence and lifts the reported confidence toward the target.
+
+    Early exit, checked after every attempt:
+      - a single attempt self-reports >= target → return it as-is;
+      - the running consensus over attempts so far reaches >= target → return
+        the consensus carrier with the calibrated confidence.
+
+    The loop ALWAYS terminates after at most ``max_attempts`` calls. If the
+    evidence genuinely doesn't support high confidence (mixed frameworks), it
+    returns the best attempt with its honest, lower number — the target is a
+    ceiling we pursue, not a value we force.
+
+    Time budget: attempt 0 keeps the full ``_DETECT_TIMEOUT_S`` cap; retries
+    use a trimmed cap so worst-case wall-clock stays bounded. The common case
+    (clear document) exits after one or two calls.
 
     If an individual attempt raises, the error is logged and the loop moves on;
     only if EVERY attempt raises is the last exception re-raised (the
     orchestrator wraps this call in a try/except that sets ``run.error``).
     """
-    best: dict[str, Any] | None = None
-    best_conf = -1.0
+    results: list[dict[str, Any]] = []
+    best_conf = 0.0
     last_exc: Exception | None = None
 
     for attempt in range(max_attempts):
         escalation = ""
         if attempt > 0:
-            # Reference the previous best confidence so the model knows what to
-            # beat. Defaults to 0.0 if the first attempt never produced one.
-            prev = best_conf if best_conf >= 0.0 else 0.0
-            escalation = _DETECT_ESCALATION.format(prev=prev)
-        # Trim retries' timeout so a slow run can't stack three full 120 s caps.
+            # Reference the best confidence so far so the model knows the bar.
+            escalation = _DETECT_ESCALATION.format(prev=best_conf)
+        # Trim retries' timeout so a slow run can't stack several full caps.
         attempt_timeout = _DETECT_TIMEOUT_S if attempt == 0 else max(30.0, _DETECT_TIMEOUT_S / 2)
         try:
             parsed = await _detect_and_identify(
@@ -336,18 +415,35 @@ async def _detect_with_confidence(
             )
             continue
 
-        conf = _confidence_of(parsed)
-        if conf > best_conf:
-            best_conf = conf
-            best = parsed
-        if conf >= target_confidence:
+        results.append(parsed)
+        raw = _confidence_of(parsed)
+        best_conf = max(best_conf, raw)
+        # The model itself is confident enough — trust it, no calibration.
+        if raw >= target_confidence:
             return parsed
+        # Otherwise see whether cross-attempt agreement clears the bar.
+        carrier, consensus = _consensus(results)
+        if carrier is not None and consensus >= target_confidence:
+            out = dict(carrier)
+            out["confidence"] = round(consensus, 4)
+            logger.info(
+                "comparison detect: consensus confidence %.2f over %d attempts (raw best %.2f)",
+                consensus, len(results), best_conf,
+            )
+            return out
 
-    if best is None:
+    if not results:
         # Every attempt raised — surface the last failure to the orchestrator.
         assert last_exc is not None
         raise last_exc
-    return best
+    # Exhausted attempts without clearing the bar: return the best result we
+    # have, carrying the calibrated consensus confidence (>= its raw value).
+    carrier, consensus = _consensus(results)
+    if carrier is None:
+        return max(results, key=_confidence_of)
+    out = dict(carrier)
+    out["confidence"] = round(max(consensus, _confidence_of(carrier)), 4)
+    return out
 
 
 def _parse_json(text: str) -> dict[str, Any]:
