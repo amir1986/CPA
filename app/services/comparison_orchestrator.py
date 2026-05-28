@@ -29,6 +29,7 @@ from typing import Any
 
 from app.agent.agent import run_agent
 from app.agent.tools import Tool
+from app.db.models.auth_models import User
 from app.db.models.comparison_models import (
     ComparisonIssue,
     ComparisonRun,
@@ -307,7 +308,27 @@ def _hydrate_query_answer(
     )
 
 
-async def _run_one_agent(topic: str, current_summary: str, jurisdiction: str) -> QueryAnswer:
+# Appended to a generation prompt when the user's locale is Hebrew. The
+# LLM writes its narrative answer in Hebrew while keeping standard codes
+# (ASC 606, IFRS 9, IAS 39) and abbreviations (EPS, FVOCI) in English.
+# Generating Hebrew up-front sidesteps the unreliable English→Hebrew
+# export-time translation that kept degrading on gpt-oss:120b.
+_HE_DIRECTIVE = (
+    " Write your entire answer in Hebrew. Keep standard codes (e.g. ASC 606, "
+    "IFRS 9, IAS 39) and common accounting abbreviations (EPS, FVOCI, ECL, "
+    "EIR) in their original English form, but write all other prose in Hebrew."
+)
+
+
+def _locale_directive(locale: str) -> str:
+    """Prompt suffix that pins the LLM's output language. Empty for
+    English (the model's default), the Hebrew directive otherwise."""
+    return _HE_DIRECTIVE if locale == "he" else ""
+
+
+async def _run_one_agent(
+    topic: str, current_summary: str, jurisdiction: str, *, locale: str = "en",
+) -> QueryAnswer:
     """One side of the comparison, driven by the agent loop."""
     question = (
         f"Summarize the {jurisdiction} accounting treatment of: {topic}. "
@@ -315,6 +336,7 @@ async def _run_one_agent(topic: str, current_summary: str, jurisdiction: str) ->
         f"Quote the controlling standard and identify the recognition / "
         "measurement rules. Use kb_search to look up the relevant standards. "
         "Return your final answer with at least one citation."
+        + _locale_directive(locale)
     )
     result = await run_agent(
         question,
@@ -338,7 +360,7 @@ Topic: {topic}
 Context (taxpayer's current policy excerpt):
 {current_summary}
 
-Respond with prose only. Do NOT wrap in JSON. Do NOT include citations — your answer will be labeled as model-knowledge synthesis."""
+Respond with prose only. Do NOT wrap in JSON. Do NOT include citations — your answer will be labeled as model-knowledge synthesis.{locale_directive}"""
 
 
 async def _synthesize_treatment(
@@ -346,6 +368,8 @@ async def _synthesize_treatment(
     current_summary: str,
     jurisdiction: str,
     llm: LLMClient,
+    *,
+    locale: str = "en",
 ) -> str:
     """Direct LLM call producing a citation-free, marked summary."""
     framework_name = "US GAAP (FASB ASC)" if jurisdiction == "US" else "IFRS / IAS"
@@ -353,6 +377,7 @@ async def _synthesize_treatment(
         framework=framework_name,
         topic=topic,
         current_summary=current_summary[:600],
+        locale_directive=_locale_directive(locale),
     )
     try:
         response = await asyncio.wait_for(llm.complete(prompt), timeout=60.0)
@@ -363,28 +388,36 @@ async def _synthesize_treatment(
     if not text:
         return ""
     # Mark the synthesis so the frontend can render a "no citations" badge.
+    # The marker stays English here; the export layer's `localize_boilerplate`
+    # flips it to Hebrew deterministically when locale=he.
     return f"[synthesized from model knowledge — no standards retrieved]\n\n{text}"
 
 
-async def _one_side(topic: str, current_summary: str, jurisdiction: str) -> QueryAnswer:
+async def _one_side(
+    topic: str, current_summary: str, jurisdiction: str, *, locale: str = "en",
+) -> QueryAnswer:
     """Agent first, then synthesis fallback on refusal."""
-    primary = await _run_one_agent(topic, current_summary, jurisdiction)
+    primary = await _run_one_agent(topic, current_summary, jurisdiction, locale=locale)
     if not primary.refused and primary.answer.strip():
         return primary
     # Corpus empty / agent gave up → fall back to direct LLM synthesis.
-    text = await _synthesize_treatment(topic, current_summary, jurisdiction, get_llm())
+    text = await _synthesize_treatment(
+        topic, current_summary, jurisdiction, get_llm(), locale=locale,
+    )
     if not text:
         return primary  # nothing better to offer
     return QueryAnswer(
         answer=text,
         citations=[],
         refused=False,    # we DO have content, just no cites
-        language="en",
+        language=locale,
         retrieved=[],
     )
 
 
-async def _compare_one(topic: str, current_summary: str) -> tuple[QueryAnswer, QueryAnswer]:
+async def _compare_one(
+    topic: str, current_summary: str, *, locale: str = "en",
+) -> tuple[QueryAnswer, QueryAnswer]:
     """Drive both jurisdictions in parallel via the agent loop, falling back
     to a direct LLM synthesis when the corpus is empty.
 
@@ -394,11 +427,15 @@ async def _compare_one(topic: str, current_summary: str) -> tuple[QueryAnswer, Q
     cited summary. If both kb_search calls return refusal (typical on
     deploys without an ingested standards corpus), we fall back to an
     explicitly-marked LLM synthesis so the comparison panes are populated.
+
+    ``locale`` pins the language the LLM writes its narrative answer in
+    (Hebrew when the user's stored locale is ``he``); verbatim citations
+    stay in their source language regardless.
     """
     return await asyncio.wait_for(
         asyncio.gather(
-            _one_side(topic, current_summary, "US"),
-            _one_side(topic, current_summary, "IFRS"),
+            _one_side(topic, current_summary, "US", locale=locale),
+            _one_side(topic, current_summary, "IFRS", locale=locale),
         ),
         timeout=_COMPARE_TIMEOUT_S,
     )
@@ -428,7 +465,7 @@ SUMMARY:
 
 QUOTES (each line is one verbatim retrieved standards excerpt):
 {quotes}
-"""
+{locale_directive}"""
 
 _VERIFY_TIMEOUT_S = 60.0
 
@@ -438,12 +475,19 @@ async def _verify_one_side(
     summary: str | None,
     citations: list,
     llm: LLMClient,
+    *,
+    locale: str = "en",
 ) -> str | None:
     """Run the verifier agent against a single side's summary + its cited
     quotes. Returns a short prose verification report (3-6 sentences) that
     the orchestrator persists and the PDF/UI surface alongside the summary.
 
     Returns None when there's nothing to verify (no summary).
+
+    The canonical no-corpus / empty-quote messages stay in English here;
+    the export layer's ``localize_boilerplate`` flips them to Hebrew
+    deterministically. The LLM-authored report (when quotes exist) is
+    written directly in ``locale``.
     """
     if not summary or not summary.strip():
         return None
@@ -473,6 +517,7 @@ async def _verify_one_side(
         framework=framework_name,
         summary=summary,
         quotes="\n".join(quote_lines),
+        locale_directive=_locale_directive(locale),
     )
     try:
         response = await asyncio.wait_for(llm.complete(prompt), timeout=_VERIFY_TIMEOUT_S)
@@ -489,6 +534,8 @@ async def _verify_both_sides(
     gaap_citations: list,
     ifrs_summary: str | None,
     ifrs_citations: list,
+    *,
+    locale: str = "en",
 ) -> tuple[str | None, str | None]:
     """Run the verifier in parallel for both sides — one LLM call per side.
 
@@ -500,8 +547,8 @@ async def _verify_both_sides(
     """
     llm = get_llm()
     results = await asyncio.gather(
-        _verify_one_side("US", gaap_summary, gaap_citations, llm),
-        _verify_one_side("IFRS", ifrs_summary, ifrs_citations, llm),
+        _verify_one_side("US", gaap_summary, gaap_citations, llm, locale=locale),
+        _verify_one_side("IFRS", ifrs_summary, ifrs_citations, llm, locale=locale),
         return_exceptions=True,
     )
 
@@ -527,6 +574,18 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
         if run is None:
             logger.error("comparison run vanished before orchestrator started: %s", run_id)
             return
+
+        # Generate the memo prose directly in the user's preferred
+        # language. The backend stores each user's locale (set via the
+        # Hebrew/English toggle → PATCH /auth/me/locale). Writing Hebrew
+        # from the start is far more reliable than generating English and
+        # translating it after the fact — the export-time translation
+        # path repeatedly degraded to English on gpt-oss:120b. Verbatim
+        # standards citations still stay in their source language (set
+        # later); only the LLM-authored summaries/verifications honour
+        # this locale.
+        user = await session.get(User, run.user_id)
+        output_locale = user.locale if (user and user.locale in ("en", "he")) else "en"
 
         # ── 1. Extract every file ──
         run.status = ComparisonStatus.parsing
@@ -624,7 +683,9 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
             ]
 
             try:
-                gaap_ans, ifrs_ans = await _compare_one(topic, current_summary)
+                gaap_ans, ifrs_ans = await _compare_one(
+                    topic, current_summary, locale=output_locale,
+                )
             except Exception as exc:
                 logger.warning("comparison fan-out failed for topic %r: %s", topic, exc)
                 gaap_ans = ifrs_ans = None
@@ -641,6 +702,7 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
             try:
                 gaap_verif, ifrs_verif = await _verify_both_sides(
                     topic, gaap_summary, gaap_cites, ifrs_summary, ifrs_cites,
+                    locale=output_locale,
                 )
             except Exception as exc:
                 logger.warning("verifier agent crashed for topic %r: %s", topic, exc)
