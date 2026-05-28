@@ -205,12 +205,19 @@ async def _detect_and_identify(
     valid_chunk_ids: set[str],
     llm: LLMClient,
     locale: str = "en",
+    escalation: str = "",
+    timeout: float = _DETECT_TIMEOUT_S,
 ) -> dict[str, Any]:
     prompt = _DETECT_PROMPT.format(
         corpus=text,
         locale_directive=_DETECT_HE_DIRECTIVE if locale == "he" else "",
     )
-    response = await asyncio.wait_for(llm.complete(prompt), timeout=_DETECT_TIMEOUT_S)
+    # Append any re-examination directive AFTER .format() so it can't collide
+    # with the `{corpus}`/`{locale_directive}` placeholders (escalation text
+    # contains braces-free prose but appending is the least-risky path).
+    if escalation:
+        prompt = prompt + escalation
+    response = await asyncio.wait_for(llm.complete(prompt), timeout=timeout)
     parsed = _parse_json(response.text)
     # Drop fabricated source_chunk_refs.
     issues = parsed.get("issues") or []
@@ -224,6 +231,123 @@ async def _detect_and_identify(
         cleaned.append(issue)
     parsed["issues"] = cleaned
     return parsed
+
+
+def _confidence_of(parsed: dict[str, Any]) -> float:
+    """Read a normalized confidence float in [0, 1] from a parsed detection
+    dict, returning 0.0 when the value is missing, invalid, a bool, or NaN.
+
+    Mirrors the bool-rejection rule the orchestrator already applies
+    (`isinstance(True, (int, float))` is True in Python, so a hallucinated
+    `"confidence": true` must NOT coerce to 1.0). Strings like "0.8" are
+    accepted on a best-effort basis via float().
+    """
+    raw = parsed.get("confidence")
+    if isinstance(raw, bool):
+        return 0.0
+    value: float
+    if isinstance(raw, (int, float)):
+        value = float(raw)
+    elif isinstance(raw, str):
+        try:
+            value = float(raw.strip())
+        except (ValueError, TypeError):
+            return 0.0
+    else:
+        return 0.0
+    # Reject NaN/Infinity (NaN compares false to everything, including itself).
+    if value != value or value in (float("inf"), float("-inf")):
+        return 0.0
+    # Clamp into [0, 1] so a stray 1.4 doesn't trip the >= target check.
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+
+# Per-attempt re-examination directive appended (after `.format()`) on the
+# 2nd+ detection attempt. Standard-family codes stay English even for Hebrew
+# runs — the model returns those in English regardless of locale.
+_DETECT_ESCALATION = (
+    "\n\nThis is a re-examination. Your previous determination reported "
+    "confidence {prev:.2f}. Re-read the document carefully, identify the "
+    "specific standard families that drive the US-GAAP-vs-IFRS determination "
+    "(e.g. ASC 326 vs IFRS 9, ASC 842 vs IFRS 16), and return a "
+    "higher-confidence determination ONLY if the evidence justifies it. Do "
+    "not inflate confidence without textual support."
+)
+
+
+async def _detect_with_confidence(
+    text: str,
+    *,
+    valid_chunk_ids: set[str],
+    llm: LLMClient,
+    locale: str = "en",
+    target_confidence: float = 0.95,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    """Run framework detection up to ``max_attempts`` times, escalating the
+    prompt on retries, and return the highest-confidence parsed result.
+
+    The model self-reports confidence, so ``target_confidence`` (0.95) is a
+    best-effort target, not a guarantee — the loop ALWAYS terminates after at
+    most ``max_attempts`` calls and returns the best attempt it saw. It exits
+    early the moment an attempt meets/exceeds the target.
+
+    Time budget: each attempt keeps its own ``_DETECT_TIMEOUT_S`` cap inside
+    ``_detect_and_identify``. Detection typically returns in 10-30 s and the
+    loop exits early on the first sufficiently-confident answer, so the common
+    case is a single call. The worst case is ``max_attempts`` sequential calls;
+    we shave the per-attempt timeout on retries so total wall-clock stays
+    bounded well under what a runaway loop could cost.
+
+    If an individual attempt raises, the error is logged and the loop moves on;
+    only if EVERY attempt raises is the last exception re-raised (the
+    orchestrator wraps this call in a try/except that sets ``run.error``).
+    """
+    best: dict[str, Any] | None = None
+    best_conf = -1.0
+    last_exc: Exception | None = None
+
+    for attempt in range(max_attempts):
+        escalation = ""
+        if attempt > 0:
+            # Reference the previous best confidence so the model knows what to
+            # beat. Defaults to 0.0 if the first attempt never produced one.
+            prev = best_conf if best_conf >= 0.0 else 0.0
+            escalation = _DETECT_ESCALATION.format(prev=prev)
+        # Trim retries' timeout so a slow run can't stack three full 120 s caps.
+        attempt_timeout = _DETECT_TIMEOUT_S if attempt == 0 else max(30.0, _DETECT_TIMEOUT_S / 2)
+        try:
+            parsed = await _detect_and_identify(
+                text,
+                valid_chunk_ids=valid_chunk_ids,
+                llm=llm,
+                locale=locale,
+                escalation=escalation,
+                timeout=attempt_timeout,
+            )
+        except Exception as exc:  # retry on any per-attempt failure
+            last_exc = exc
+            logger.warning(
+                "comparison detect attempt %d/%d failed: %r", attempt + 1, max_attempts, exc,
+            )
+            continue
+
+        conf = _confidence_of(parsed)
+        if conf > best_conf:
+            best_conf = conf
+            best = parsed
+        if conf >= target_confidence:
+            return parsed
+
+    if best is None:
+        # Every attempt raised — surface the last failure to the orchestrator.
+        assert last_exc is not None
+        raise last_exc
+    return best
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -681,7 +805,7 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
         corpus = _build_corpus(all_spans)
         valid_ids = {ref for ref, _ in all_spans}
         try:
-            parsed = await _detect_and_identify(
+            parsed = await _detect_with_confidence(
                 corpus, valid_chunk_ids=valid_ids, llm=get_llm(), locale=output_locale,
             )
         except Exception as exc:

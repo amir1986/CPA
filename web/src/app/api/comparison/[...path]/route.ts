@@ -19,6 +19,19 @@ function isStreamingPath(path: string[]): boolean {
   return path[path.length - 1] === "stream";
 }
 
+// Idempotent endpoints we can safely retry on ANY 5xx (not just the
+// "transient 500 with no body" heuristic). `export` only reads the run +
+// renders a memo — no writes, no side effects — so re-issuing it is safe
+// and is exactly what cures the "first PDF/memo click 500s, second click
+// works" cold-start symptom: the first request hits cpa-api mid-wake
+// (or during the first cold Ollama translation call) and 500s with a
+// problem+json body that the transient-500 heuristic would NOT retry.
+// Retrying server-side inside the one request means the user never sees
+// that first-attempt failure.
+function isIdempotentRetryable(path: string[]): boolean {
+  return path[path.length - 1] === "export";
+}
+
 // Multipart uploads (create_run) can be ~500 MB total — buffering them
 // for retry would OOM the 512 MB Next process. Skip retry for these and
 // fall back to a single streaming attempt. Endpoints with tiny JSON
@@ -70,6 +83,7 @@ async function fetchWithRetry(
   url: string,
   init: RequestInit,
   retries: number,
+  retryAny5xx = false,
 ): Promise<Response> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -79,6 +93,10 @@ async function fetchWithRetry(
         res.status === 502 ||
         res.status === 503 ||
         res.status === 504 ||
+        // For idempotent endpoints (export), retry on ANY 5xx — a
+        // cold-start crash 500s with a problem+json body that the
+        // transient-500 heuristic deliberately skips.
+        (retryAny5xx && res.status >= 500) ||
         (await isTransient500(res));
       if (attempt < retries && transient) {
         await new Promise((r) => setTimeout(r, COLD_START_BACKOFF_MS[attempt] ?? 4000));
@@ -147,7 +165,9 @@ async function forward(
   const body = hasBody ? await req.arrayBuffer() : undefined;
   const init: RequestInit = { method: req.method, headers, body, cache: "no-store" };
 
-  const upstream = await fetchWithRetry(url, init, COLD_START_RETRIES);
+  const upstream = await fetchWithRetry(
+    url, init, COLD_START_RETRIES, isIdempotentRetryable(path),
+  );
   const respHeaders = new Headers();
   upstream.headers.forEach((value, key) => respHeaders.set(key, value));
   return new NextResponse(upstream.body, { status: upstream.status, headers: respHeaders });

@@ -21,13 +21,15 @@ import pytest
 from app.db.models.files import File, FileKind, ParsedStatus
 from app.domain.models import Citation
 from app.ingest_docs.extractors.pdf_text import ExtractedSpan
-from app.llm.client import FakeLLM
+from app.llm.client import FakeLLM, LLMResponse
 from app.rag.query_engine import QueryAnswer
 from app.services.comparison_orchestrator import (
     _build_corpus,
     _citation_dicts,
+    _confidence_of,
     _derive_differences,
     _detect_and_identify,
+    _detect_with_confidence,
     _kind_from_file,
     _locale_directive,
     _parse_json,
@@ -298,3 +300,115 @@ async def test_verify_one_side_threads_locale_into_prompt() -> None:
     out = await _verify_one_side("IFRS", "summary text", cites, _Capture(), locale="he")
     assert "Write your entire answer in Hebrew" in seen["prompt"]
     assert out == "דוח אימות בעברית."
+
+
+# ─────────────── confidence-driven detection retry ───────────────
+
+
+class _SequenceLLM:
+    """LLM stub that returns a SEQUENCE of canned responses — one per
+    ``complete()`` call — so a test can simulate confidence rising (or
+    plateauing) across detection attempts. Unlike ``FakeLLM`` (same response
+    every call), each ``complete()`` pops the next queued ``LLMResponse`` and
+    records the prompt it was given.
+    """
+
+    def __init__(self, payloads: list[dict]) -> None:
+        self._responses = [LLMResponse(text=json.dumps(p), usage={}) for p in payloads]
+        self._i = 0
+        self.prompts: list[str] = []
+
+    async def complete(self, prompt, *, system=None):
+        self.prompts.append(prompt)
+        resp = self._responses[self._i]
+        # Saturate on the last response so an over-call surfaces as a wrong
+        # count assertion rather than an IndexError.
+        if self._i < len(self._responses) - 1:
+            self._i += 1
+        return resp
+
+
+def test_confidence_of_normalizes_values() -> None:
+    assert _confidence_of({"confidence": 0.8}) == 0.8
+    assert _confidence_of({"confidence": "0.8"}) == 0.8
+    assert _confidence_of({"confidence": 1}) == 1.0
+    # bool must NOT coerce to 1.0 — CLAUDE.md §3 gotcha.
+    assert _confidence_of({"confidence": True}) == 0.0
+    # Missing / invalid / non-numeric → 0.0
+    assert _confidence_of({}) == 0.0
+    assert _confidence_of({"confidence": None}) == 0.0
+    assert _confidence_of({"confidence": "nope"}) == 0.0
+    assert _confidence_of({"confidence": float("nan")}) == 0.0
+    assert _confidence_of({"confidence": float("inf")}) == 0.0
+    # Out-of-range values clamp into [0, 1].
+    assert _confidence_of({"confidence": 1.4}) == 1.0
+    assert _confidence_of({"confidence": -0.2}) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_detect_with_confidence_stops_when_first_attempt_meets_target() -> None:
+    """A first attempt already at/above the target makes exactly one LLM
+    call and returns that result — no wasted retries."""
+    llm = _SequenceLLM([
+        {"detected_framework": "US", "confidence": 0.96, "issues": []},
+        {"detected_framework": "IFRS", "confidence": 0.99, "issues": []},
+    ])
+    result = await _detect_with_confidence(
+        "corpus", valid_chunk_ids=set(), llm=llm, target_confidence=0.95, max_attempts=3,
+    )
+    assert result["confidence"] == 0.96
+    assert result["detected_framework"] == "US"
+    assert len(llm.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_detect_with_confidence_returns_attempt_that_reaches_target() -> None:
+    """Confidence climbs 0.6 → 0.8 → 0.97; the loop runs all three attempts
+    and returns the 0.97 result once it clears the target."""
+    llm = _SequenceLLM([
+        {"detected_framework": "US", "confidence": 0.6, "issues": []},
+        {"detected_framework": "US", "confidence": 0.8, "issues": []},
+        {"detected_framework": "US", "confidence": 0.97, "issues": []},
+    ])
+    result = await _detect_with_confidence(
+        "corpus", valid_chunk_ids=set(), llm=llm, target_confidence=0.95, max_attempts=3,
+    )
+    assert result["confidence"] == 0.97
+    assert len(llm.prompts) == 3
+
+
+@pytest.mark.asyncio
+async def test_detect_with_confidence_keeps_best_when_target_never_reached() -> None:
+    """When no attempt reaches the target, the loop exhausts max_attempts and
+    returns the HIGHEST-confidence attempt (0.65), not the last one (0.62)."""
+    llm = _SequenceLLM([
+        {"detected_framework": "US", "confidence": 0.6, "issues": []},
+        {"detected_framework": "IFRS", "confidence": 0.65, "issues": []},
+        {"detected_framework": "US", "confidence": 0.62, "issues": []},
+    ])
+    result = await _detect_with_confidence(
+        "corpus", valid_chunk_ids=set(), llm=llm, target_confidence=0.95, max_attempts=3,
+    )
+    assert result["confidence"] == 0.65
+    assert result["detected_framework"] == "IFRS"
+    assert len(llm.prompts) == 3
+
+
+@pytest.mark.asyncio
+async def test_detect_with_confidence_escalates_prompt_on_retries() -> None:
+    """The re-examination directive is absent on the 1st attempt and present
+    on every subsequent attempt (and references the prior confidence)."""
+    llm = _SequenceLLM([
+        {"detected_framework": "US", "confidence": 0.6, "issues": []},
+        {"detected_framework": "US", "confidence": 0.7, "issues": []},
+        {"detected_framework": "US", "confidence": 0.75, "issues": []},
+    ])
+    await _detect_with_confidence(
+        "corpus", valid_chunk_ids=set(), llm=llm, target_confidence=0.95, max_attempts=3,
+    )
+    assert len(llm.prompts) == 3
+    assert "re-examination" not in llm.prompts[0]
+    assert "re-examination" in llm.prompts[1]
+    assert "re-examination" in llm.prompts[2]
+    # The escalation surfaces the previous best confidence (0.60).
+    assert "0.60" in llm.prompts[1]
