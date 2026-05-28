@@ -271,6 +271,47 @@ def test_flatten_for_translation_skips_blank_rationale() -> None:
     assert translation_svc._flatten_for_translation("   ", []) == {}
 
 
+def test_flatten_for_translation_skips_already_hebrew_fields() -> None:
+    """When the orchestrator generated a run in Hebrew (user's stored
+    locale was 'he'), the prose is already in the target language. Those
+    fields must NOT be flattened for translation — re-sending Hebrew to
+    the LLM "to translate to Hebrew" wastes calls and risks corruption.
+    The export route renders skipped fields verbatim via its getattr
+    fallback.
+    """
+    issues = [
+        _StubIssue(
+            "heb",
+            current_summary="ההכרה בהכנסה מתבצעת כאשר השליטה מועברת.",  # Hebrew
+            gaap_summary="Under US GAAP, revenue is recognized on transfer.",  # English
+        ),
+    ]
+    flat = translation_svc._flatten_for_translation(
+        "זוהה תקן US GAAP.", issues,  # Hebrew rationale
+    )
+    # Hebrew rationale + Hebrew current_summary skipped; only the English
+    # gaap_summary remains for translation.
+    assert "_run.rationale" not in flat
+    assert "heb.current_summary" not in flat
+    assert flat["heb.gaap_summary"] == "Under US GAAP, revenue is recognized on transfer."
+
+
+def test_flatten_for_translation_hebrew_run_yields_empty() -> None:
+    """A run fully generated in Hebrew flattens to an empty dict — the
+    export route then short-circuits the whole translation path and
+    renders the stored Hebrew prose directly (no LLM call)."""
+    issues = [
+        _StubIssue(
+            "heb",
+            current_summary="טקסט עברי אחד.",
+            gaap_summary="טקסט עברי שתיים.",
+            ifrs_summary="טקסט עברי שלוש.",
+            differences="טקסט עברי ארבע.",
+        ),
+    ]
+    assert translation_svc._flatten_for_translation("נימוק בעברית.", issues) == {}
+
+
 def test_translations_cover_requires_every_key() -> None:
     """A partial cache must NOT count as covered — the export route falls
     back to synchronous translation for missing keys, but only when this

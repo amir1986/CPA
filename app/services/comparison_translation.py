@@ -226,19 +226,27 @@ async def _translate_batches_parallel(
 def _flatten_for_translation(
     rationale: str | None, issues: list[ComparisonIssue]
 ) -> dict[str, str]:
-    """Collect every non-empty prose field into a single flat dict, keyed
-    so the export route can look the translation back up.
+    """Collect every non-empty prose field that still NEEDS translation
+    into a single flat dict, keyed so the export route can look the
+    translation back up.
 
     `_run.rationale` is special-cased; per-issue fields are keyed as
     ``<issue_id>.<prose_field>``.
+
+    Fields that already contain Hebrew are SKIPPED. When the orchestrator
+    generated a run in Hebrew (the user's stored locale was ``he``), the
+    prose is already in the target language — re-sending it to the LLM
+    "to translate to Hebrew" wastes calls and risks corrupting good
+    Hebrew. The export route falls back to the raw field value for any
+    key not present here, so skipped Hebrew fields render verbatim.
     """
     flat: dict[str, str] = {}
-    if rationale and rationale.strip():
+    if rationale and rationale.strip() and not _contains_hebrew(rationale):
         flat["_run.rationale"] = rationale
     for i in issues:
         for k in PROSE_KEYS:
             v = getattr(i, k, None)
-            if v and v.strip():
+            if v and v.strip() and not _contains_hebrew(v):
                 flat[f"{i.id}.{k}"] = v
     return flat
 
