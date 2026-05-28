@@ -166,6 +166,24 @@ export const en = {
     saved_locally_server: "{label} (locally — server: {detail})",
     saved_locally_status: "{label} (locally — server returned {status})",
     saved_locally_error: "{label} (locally — {error})",
+    // Keyed by the backend problem+json `title` (= error code) so the UI
+    // renders a localized message instead of the English `detail` string.
+    codes: {
+      bad_request: "Invalid request.",
+      unsupported_file: "Unsupported file type.",
+      empty_file: "The file is empty.",
+      too_large: "File too large (max 50 MB per file, 120 MB total).",
+      not_ready: "The run hasn't finished yet.",
+      empty: "The run produced no issues to export.",
+      not_found: "Not found.",
+      pdf_timeout: "PDF generation took too long — try the Markdown export.",
+      export_crashed: "The export failed before the memo could be rendered.",
+      rate_limited: "Too many requests — try again in a moment.",
+      unavailable:
+        "The service is unavailable — it may be warming up; try again in 30–60 seconds.",
+      upstream_unavailable:
+        "The API is unreachable — it may be cold-starting; try again in 30–60 seconds.",
+    },
   },
   citations: {
     title: "Citation",

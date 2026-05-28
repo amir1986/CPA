@@ -156,6 +156,24 @@ export const he: PartialDeep<Dict> = {
     saved_locally_server: "{label} (מקומית — מהשרת: {detail})",
     saved_locally_status: "{label} (מקומית — השרת החזיר {status})",
     saved_locally_error: "{label} (מקומית — {error})",
+    // לפי קוד השגיאה (problem+json `title`) כדי להציג הודעה מתורגמת
+    // במקום מחרוזת ה-detail באנגלית מהשרת.
+    codes: {
+      bad_request: "בקשה לא תקינה.",
+      unsupported_file: "סוג קובץ לא נתמך.",
+      empty_file: "הקובץ ריק.",
+      too_large: "הקובץ גדול מדי (עד 50MB לקובץ, 120MB בסך הכל).",
+      not_ready: "הריצה עדיין לא הסתיימה.",
+      empty: "הריצה לא הפיקה סוגיות לייצוא.",
+      not_found: "לא נמצא.",
+      pdf_timeout: "יצירת ה-PDF ארכה זמן רב מדי — נסו ייצוא Markdown.",
+      export_crashed: "הייצוא נכשל לפני שניתן היה להפיק את המסמך.",
+      rate_limited: "יותר מדי בקשות — נסו שוב בעוד רגע.",
+      unavailable:
+        "השירות אינו זמין כרגע — ייתכן שהוא מתחמם; נסו שוב בעוד 30–60 שניות.",
+      upstream_unavailable:
+        "ה-API אינו זמין כרגע — ייתכן שהוא מתחמם; נסו שוב בעוד 30–60 שניות.",
+    },
   },
   citations: {
     title: "ציטוט",

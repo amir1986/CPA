@@ -341,6 +341,38 @@ def _locale_directive(locale: str) -> str:
     return _HE_DIRECTIVE if locale == "he" else ""
 
 
+def _run_error(locale: str, key: str, *, exc: object = "", names: str = "") -> str:
+    """Localized text for the `run.error` field, which the run-detail page
+    renders verbatim when a run fails. Hebrew is the app default; an
+    English user (stored locale 'en') still sees English."""
+    he = locale != "en"
+    if key == "extraction_failed":
+        return f"חילוץ הקבצים נכשל: {exc}" if he else f"extraction failed: {exc}"
+    if key == "scanned":
+        if he:
+            return (
+                "כל קובצי ה-PDF שהועלו נראים כתמונות סרוקות. זיהוי תווים (OCR) "
+                f"אינו נתמך עדיין. קבצים: {names}"
+            )
+        return (
+            "All uploaded PDFs look like scanned images. OCR is not "
+            f"yet supported. Files: {names}"
+        )
+    if key == "no_text":
+        return (
+            "לא נמצא טקסט הניתן לחילוץ בקבצים שהועלו" if he
+            else "no extractable text in uploaded files"
+        )
+    if key == "detect_failed":
+        return f"זיהוי התקן נכשל: {exc}" if he else f"detect_failed: {exc}"
+    if key == "no_issues":
+        return (
+            "לא זוהו סוגיות חשבונאיות בטקסט שהועלה" if he
+            else "no accounting issues identified in the uploaded text"
+        )
+    return key
+
+
 async def _run_one_agent(
     topic: str, current_summary: str, jurisdiction: str, *, locale: str = "en",
 ) -> QueryAnswer:
@@ -627,19 +659,18 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
         except Exception as exc:
             logger.exception("comparison extraction failed: %s", run_id)
             run.status = ComparisonStatus.failed
-            run.error = f"extraction failed: {exc}"
+            run.error = _run_error(output_locale, "extraction_failed", exc=exc)
             await session.commit()
             return
 
         if not all_spans:
             run.status = ComparisonStatus.failed
             if scanned_pdf_names:
-                run.error = (
-                    "All uploaded PDFs look like scanned images. OCR is not "
-                    f"yet supported. Files: {', '.join(scanned_pdf_names)}"
+                run.error = _run_error(
+                    output_locale, "scanned", names=", ".join(scanned_pdf_names),
                 )
             else:
-                run.error = "no extractable text in uploaded files"
+                run.error = _run_error(output_locale, "no_text")
             await session.commit()
             return
 
@@ -656,7 +687,7 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
         except Exception as exc:
             logger.exception("comparison detect/identify failed: %s", run_id)
             run.status = ComparisonStatus.failed
-            run.error = f"detect_failed: {exc}"
+            run.error = _run_error(output_locale, "detect_failed", exc=exc)
             await session.commit()
             return
 
@@ -676,7 +707,7 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
         issues_payload = parsed.get("issues") or []
         if not issues_payload:
             run.status = ComparisonStatus.done
-            run.error = "no accounting issues identified in the uploaded text"
+            run.error = _run_error(output_locale, "no_issues")
             await session.commit()
             return
 

@@ -31,6 +31,7 @@ from app.services.comparison_orchestrator import (
     _kind_from_file,
     _locale_directive,
     _parse_json,
+    _run_error,
     _run_one_agent,
     _synthesize_treatment,
     _verify_one_side,
@@ -157,6 +158,24 @@ async def test_detect_and_identify_adds_hebrew_directive_when_locale_he() -> Non
     en = _Capture()
     await _detect_and_identify("corpus", valid_chunk_ids=set(), llm=en, locale="en")
     assert "in Hebrew" not in en.seen
+
+
+def test_run_error_localizes_failure_messages() -> None:
+    """`run.error` is rendered verbatim on the run-detail card, so the
+    orchestrator's failure messages must follow the user's locale. Hebrew
+    is the default; English only for an explicit 'en'."""
+    from app.services.comparison_translation import _contains_hebrew
+
+    # Hebrew user — every failure message is Hebrew.
+    for key in ("extraction_failed", "scanned", "no_text", "detect_failed", "no_issues"):
+        msg = _run_error("he", key, exc="boom", names="a.pdf")
+        assert _contains_hebrew(msg), f"{key} not Hebrew: {msg!r}"
+
+    # English user — English, and dynamic parts interpolated.
+    assert _run_error("en", "extraction_failed", exc="boom") == "extraction failed: boom"
+    assert "a.pdf" in _run_error("en", "scanned", names="a.pdf")
+    assert _run_error("en", "no_issues") == "no accounting issues identified in the uploaded text"
+    assert not _contains_hebrew(_run_error("en", "no_text"))
 
 
 def test_citation_dicts_roundtrip() -> None:

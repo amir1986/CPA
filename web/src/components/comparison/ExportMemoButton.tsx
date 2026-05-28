@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Download, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { t } from "@/lib/i18n";
+import { apiErrorMessage, t } from "@/lib/i18n";
 import { useLocale } from "@/lib/i18n/client";
 
 export function ExportMemoButton({ runId }: { runId: string }) {
@@ -26,8 +26,11 @@ export function ExportMemoButton({ runId }: { runId: string }) {
     });
     setBusy(false);
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { detail?: string };
-      setError(body.detail ?? tr("errors.export_failed_status", { status: res.status }));
+      const body = (await res.json().catch(() => ({}))) as {
+        title?: string;
+        detail?: string;
+      };
+      setError(apiErrorMessage(body, res.status, locale, "errors.export_failed_status"));
       return;
     }
     const blob = await res.blob();

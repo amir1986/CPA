@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Loader2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { t } from "@/lib/i18n";
+import { apiErrorMessage, t } from "@/lib/i18n";
 import { useLocale } from "@/lib/i18n/client";
 
 const ACCEPTED = ".pdf,.docx,.xlsx,.csv";
@@ -35,8 +35,11 @@ export function UploadDropzone() {
     });
     setBusy(false);
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { detail?: string };
-      setError(body.detail ?? tr("errors.upload_failed_status", { status: res.status }));
+      const body = (await res.json().catch(() => ({}))) as {
+        title?: string;
+        detail?: string;
+      };
+      setError(apiErrorMessage(body, res.status, locale, "errors.upload_failed_status"));
       return;
     }
     const json = (await res.json()) as { id: string };

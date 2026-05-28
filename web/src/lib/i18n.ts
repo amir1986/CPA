@@ -39,6 +39,31 @@ export function t(
   );
 }
 
+/**
+ * Localized message for a failed API call. The backend returns
+ * problem+json with `title` = a stable error code (e.g. "too_large",
+ * "not_ready"); we map that to a translated string so a Hebrew user never
+ * sees the English `detail`. Falls back to the code map, then (English
+ * only) to the raw detail, then to a generic "<action> failed (status)".
+ */
+export function apiErrorMessage(
+  body: { title?: string; detail?: string } | null | undefined,
+  status: number,
+  locale: Locale,
+  fallbackKey: string,
+): string {
+  const code = body?.title;
+  if (code) {
+    const key = `errors.codes.${code}`;
+    const msg = t(key, locale);
+    if (msg !== key) return msg;
+  }
+  // No code mapping. In Hebrew, prefer a generic localized line over the
+  // backend's English detail; in English the detail is the best message.
+  if (locale === "he") return t(fallbackKey, locale, { status });
+  return body?.detail ?? t(fallbackKey, locale, { status });
+}
+
 function lookup(key: string, locale: Locale): string | undefined {
   const parts = key.split(".");
   let cur: unknown = DICTS[locale];
