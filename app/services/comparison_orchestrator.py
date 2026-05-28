@@ -177,8 +177,19 @@ Rules:
 - Identify between 1 and 6 distinct accounting topics actually discussed in the document.
 - Every issue MUST cite at least one source_chunk_refs id from the chunks above.
 - If the upload does not discuss any specific accounting treatment, return "issues": [].
-- Pick "US" when references favor FASB ASC / US codification; pick "IFRS" when they favor IFRS / IAS / IFRIC.
+- Pick "US" when references favor FASB ASC / US codification; pick "IFRS" when they favor IFRS / IAS / IFRIC.{locale_directive}
 """
+
+
+# Appended to the detect/identify prompt to control the language of the
+# human-readable string VALUES (rationale, topic, current_summary,
+# conversion_impact) without touching JSON keys or the framework enum.
+_DETECT_HE_DIRECTIVE = (
+    "\n- Write the human-readable string values (rationale, topic, "
+    "current_summary, conversion_impact) in Hebrew. Keep the JSON keys, the "
+    'detected_framework value ("US" / "IFRS"), and standard codes (ASC 606, '
+    "IFRS 9, IAS 39, etc.) in English."
+)
 
 
 # Cap the detect-and-identify LLM call so a slow Ollama Cloud free-tier
@@ -193,8 +204,12 @@ async def _detect_and_identify(
     *,
     valid_chunk_ids: set[str],
     llm: LLMClient,
+    locale: str = "en",
 ) -> dict[str, Any]:
-    prompt = _DETECT_PROMPT.format(corpus=text)
+    prompt = _DETECT_PROMPT.format(
+        corpus=text,
+        locale_directive=_DETECT_HE_DIRECTIVE if locale == "he" else "",
+    )
     response = await asyncio.wait_for(llm.complete(prompt), timeout=_DETECT_TIMEOUT_S)
     parsed = _parse_json(response.text)
     # Drop fabricated source_chunk_refs.
@@ -635,7 +650,9 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
         corpus = _build_corpus(all_spans)
         valid_ids = {ref for ref, _ in all_spans}
         try:
-            parsed = await _detect_and_identify(corpus, valid_chunk_ids=valid_ids, llm=get_llm())
+            parsed = await _detect_and_identify(
+                corpus, valid_chunk_ids=valid_ids, llm=get_llm(), locale=output_locale,
+            )
         except Exception as exc:
             logger.exception("comparison detect/identify failed: %s", run_id)
             run.status = ComparisonStatus.failed

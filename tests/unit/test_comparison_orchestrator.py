@@ -132,6 +132,33 @@ async def test_detect_and_identify_drops_fabricated_refs() -> None:
     assert issues[0]["source_chunk_refs"] == ["valid-ref-A"]
 
 
+@pytest.mark.asyncio
+async def test_detect_and_identify_adds_hebrew_directive_when_locale_he() -> None:
+    """The detect/identify step produces the rationale, topic,
+    current_summary and conversion_impact. When locale=he it must tell the
+    LLM to write those string values in Hebrew (the framework-detection
+    rationale was rendering in English inside a Hebrew UI). We capture the
+    prompt the LLM receives and assert the directive presence by locale."""
+
+    class _Capture(FakeLLM):
+        def __init__(self) -> None:
+            super().__init__()
+            self.set_response(json.dumps({"detected_framework": "US", "issues": []}))
+            self.seen = ""
+
+        async def complete(self, prompt, *, system=None):
+            self.seen = prompt
+            return await super().complete(prompt, system=system)
+
+    he = _Capture()
+    await _detect_and_identify("corpus", valid_chunk_ids=set(), llm=he, locale="he")
+    assert "in Hebrew" in he.seen
+
+    en = _Capture()
+    await _detect_and_identify("corpus", valid_chunk_ids=set(), llm=en, locale="en")
+    assert "in Hebrew" not in en.seen
+
+
 def test_citation_dicts_roundtrip() -> None:
     cite = Citation(standard="ASC 606", paragraph="25-1", url="https://x/y", quote="control transfers")
     out = _citation_dicts([cite])
