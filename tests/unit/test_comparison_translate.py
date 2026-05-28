@@ -15,6 +15,8 @@ exercise in isolation:
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from app.api.routes import comparisons as routes
@@ -584,3 +586,41 @@ def test_kick_pretranslation_no_running_loop_is_a_noop() -> None:
     before = len(translation_svc._PRETRANSLATION_TASKS)
     translation_svc.kick_pretranslation(uuid.uuid4())
     assert len(translation_svc._PRETRANSLATION_TASKS) == before
+
+
+async def test_kick_pretranslation_dedupes_inflight_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`get_run` re-kicks pre-translation on every poll of a done run with
+    an incomplete cache. Without the in-flight guard, a page polling every
+    couple of seconds would fan out ~20 fresh LLM calls per poll — a
+    self-inflicted request storm that exhausts Ollama keys (429s) and
+    pressures the worker. The guard collapses repeated kicks for the same
+    run into a single in-flight task."""
+    import uuid as _uuid
+
+    started: list[_uuid.UUID] = []
+    release = asyncio.Event()
+
+    async def fake_pretranslate(run_id: _uuid.UUID) -> None:
+        started.append(run_id)
+        await release.wait()
+
+    monkeypatch.setattr(translation_svc, "pretranslate_run_to_hebrew", fake_pretranslate)
+
+    rid = _uuid.uuid4()
+    translation_svc.kick_pretranslation(rid)
+    translation_svc.kick_pretranslation(rid)  # de-duped — same run in flight
+    translation_svc.kick_pretranslation(rid)  # de-duped
+    await asyncio.sleep(0)  # let the single task start
+
+    assert started.count(rid) == 1, "only one task should run for a single run"
+    assert rid in translation_svc._PRETRANSLATION_INFLIGHT
+
+    # Release and drain so the done-callback clears the in-flight marker.
+    release.set()
+    pending = list(translation_svc._PRETRANSLATION_TASKS)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    await asyncio.sleep(0)
+    assert rid not in translation_svc._PRETRANSLATION_INFLIGHT

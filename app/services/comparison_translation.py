@@ -255,13 +255,20 @@ def _flatten_for_translation(
 # they're still doing work — mirrors `_BACKGROUND_TASKS` in the routes
 # module (see CLAUDE.md §3 on the create_task GC footgun).
 _PRETRANSLATION_TASKS: set[asyncio.Task[None]] = set()
+# Run ids with a pre-translation task currently in flight. `get_run` kicks
+# pre-translation on every poll of a done run with an incomplete cache;
+# without this guard a page that polls every couple of seconds would spawn
+# a fresh fan-out of ~20 LLM calls each time, hammering Ollama Cloud (429s)
+# and the worker. The guard collapses concurrent kicks for the same run
+# into one in-flight task.
+_PRETRANSLATION_INFLIGHT: set[uuid.UUID] = set()
 
 
 def kick_pretranslation(run_id: uuid.UUID) -> None:
     """Schedule `pretranslate_run_to_hebrew(run_id)` in the background and
-    keep a strong reference until it finishes. Safe to call multiple times
-    — the inner function checks the cache and short-circuits if Hebrew is
-    already cached for the run."""
+    keep a strong reference until it finishes. Safe to call repeatedly —
+    a no-op while a task for the same run is already in flight, and the
+    inner function short-circuits when the cache already covers the run."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -270,9 +277,18 @@ def kick_pretranslation(run_id: uuid.UUID) -> None:
         # synchronous fallback will run instead.
         logger.debug("kick_pretranslation called without a running loop; skipping")
         return
+    if run_id in _PRETRANSLATION_INFLIGHT:
+        # A fan-out is already running for this run; don't pile on another.
+        return
+    _PRETRANSLATION_INFLIGHT.add(run_id)
     task = loop.create_task(pretranslate_run_to_hebrew(run_id))
     _PRETRANSLATION_TASKS.add(task)
-    task.add_done_callback(_PRETRANSLATION_TASKS.discard)
+
+    def _done(t: asyncio.Task[None]) -> None:
+        _PRETRANSLATION_TASKS.discard(t)
+        _PRETRANSLATION_INFLIGHT.discard(run_id)
+
+    task.add_done_callback(_done)
 
 
 async def pretranslate_run_to_hebrew(run_id: uuid.UUID) -> None:

@@ -74,6 +74,10 @@ router = APIRouter(prefix="/comparison", tags=["comparison"])
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB per file; smaller than engagement files
 MAX_FILES_PER_RUN = 10
+# Total across all files in one run. 10 x 50 MB would be 500 MB — enough
+# to OOM the 512 MB free-tier worker on its own. Cap the aggregate so a
+# run can't pin the worker (which Render's edge then throttles with 429).
+MAX_TOTAL_UPLOAD = 120 * 1024 * 1024  # 120 MB
 
 # Keep strong refs to orchestrator tasks so the GC can't reap them mid-flight.
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
@@ -216,12 +220,29 @@ async def create_run(
     file_rows: list[File] = []
     file_ids: list[str] = []
     file_names: list[str] = []
+    total_bytes = 0
     for f in files:
+        # Reject oversized files BEFORE reading them into RAM. Starlette
+        # populates UploadFile.size from the multipart part as it spools,
+        # so we know the size without pulling 50 MB into the 512 MB free-
+        # tier worker first. Reading-then-checking (the old order) let a
+        # single fat file pin the worker long enough for Render's edge to
+        # throttle the request with a 429 — exactly the upload failure the
+        # user hit. (CLAUDE.md §3 flags this as a known OOM vector.)
+        if f.size is not None and f.size > MAX_FILE_SIZE:
+            raise ApiError(status=413, code="too_large", detail=f"{f.filename} exceeds 50 MB")
         body = await f.read()
         if not body:
             raise ApiError(status=400, code="empty_file", detail=f"empty file: {f.filename}")
         if len(body) > MAX_FILE_SIZE:
             raise ApiError(status=413, code="too_large", detail=f"{f.filename} exceeds 50 MB")
+        total_bytes += len(body)
+        if total_bytes > MAX_TOTAL_UPLOAD:
+            raise ApiError(
+                status=413,
+                code="too_large",
+                detail=f"total upload exceeds {MAX_TOTAL_UPLOAD // (1024 * 1024)} MB",
+            )
         file_id = uuid.uuid4()
         mime = f.content_type or mimetypes.guess_type(f.filename or "")[0]
         key = raw_key(engagement_id=eng.id, file_id=file_id, filename=f.filename or "upload")
@@ -242,6 +263,9 @@ async def create_run(
         file_rows.append(row)
         file_ids.append(str(file_id))
         file_names.append(row.original_name)
+        # Drop the reference so the next iteration's read doesn't stack a
+        # second file's bytes on top of this one in the worker's heap.
+        del body
     await session.flush()
 
     run = ComparisonRun(
