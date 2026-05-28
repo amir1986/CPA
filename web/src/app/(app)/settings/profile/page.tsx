@@ -8,7 +8,7 @@ import { t, type Locale } from "@/lib/i18n";
 
 export default async function ProfilePage() {
   const cookieStore = await cookies();
-  const locale: Locale = cookieStore.get("cpa_locale")?.value === "he" ? "he" : "en";
+  const locale: Locale = cookieStore.get("cpa_locale")?.value === "en" ? "en" : "he";
   const tr = (k: string) => t(k, locale);
   const me = await apiFetch<User>("/auth/me");
   return (

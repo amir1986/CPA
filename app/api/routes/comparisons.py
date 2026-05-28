@@ -128,10 +128,12 @@ class FrameworkPatch(BaseModel):
 
 class ExportIn(BaseModel):
     format: str = "md"   # "md" or "pdf"
-    # Locale for section headings + labels in the memo. Verbatim quotes
-    # are NEVER translated — they're preserved in their source language
-    # (Hebrew XLSX rows stay Hebrew, English standards stay English).
-    locale: str = "en"
+    # Locale for section headings + labels in the memo. Defaults to Hebrew
+    # (the app's default locale); only an explicit "en" produces an English
+    # memo. Verbatim quotes are NEVER translated — they're preserved in
+    # their source language (Hebrew XLSX rows stay Hebrew, English standards
+    # stay English).
+    locale: str = "he"
 
 
 # ─────────────── helpers ───────────────
@@ -503,7 +505,8 @@ async def _export_memo_impl(
 
     generated_at = datetime.now(tz=UTC).isoformat(timespec="seconds")
     framework = (run.override_framework or run.detected_framework or Framework.US).value
-    locale = "he" if payload.locale == "he" else "en"
+    # Hebrew is the default; only an explicit "en" opts out.
+    locale = "en" if payload.locale == "en" else "he"
     strings = _MEMO_STRINGS[locale]
 
     # For Hebrew exports, fill the per-issue prose dict from

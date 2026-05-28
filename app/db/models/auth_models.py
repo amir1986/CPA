@@ -51,7 +51,7 @@ class User(Base, TimestampMixin):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(SAEnum(UserRole, name="user_role"), default=UserRole.staff, nullable=False)
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    locale: Mapped[str] = mapped_column(String(8), default="en", nullable=False)
+    locale: Mapped[str] = mapped_column(String(8), default="he", nullable=False)
     api_key_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

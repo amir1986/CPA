@@ -19,9 +19,11 @@ export default function GlobalError({
   }, [error]);
 
   // Can't call cookies() from a client component — best-effort lang via
-  // document.documentElement which the root layout already set.
+  // document.documentElement which the root layout already set. Hebrew is
+  // the app default, so anything other than an explicit "en" is treated
+  // as Hebrew (covers the case where the lang attr isn't set yet).
   const isHebrew =
-    typeof document !== "undefined" && document.documentElement.lang === "he";
+    typeof document === "undefined" || document.documentElement.lang !== "en";
   const title = isHebrew ? "משהו השתבש" : "Something went wrong";
   const hint = isHebrew
     ? "ייתכן שה־API עדיין מתחמם לאחר פריסה — נסו שוב בעוד 30–60 שניות."

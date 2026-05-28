@@ -17,7 +17,7 @@ type FakeSession = {
 };
 
 const FAKE_SESSION: FakeSession = {
-  user: { email: "demo@cpa.example", name: "Demo User", locale: "en" },
+  user: { email: "demo@cpa.example", name: "Demo User", locale: "he" },
   accessToken: undefined,
   refreshToken: undefined,
 };

@@ -43,7 +43,18 @@ async def ensure_demo_user_exists() -> uuid.UUID | None:
                 await session.execute(select(User).where(User.email == DEMO_USER_EMAIL))
             ).scalar_one_or_none()
             if existing is not None:
-                logger.info("demo user already provisioned: %s", existing.id)
+                # Backfill the locale default for a demo user provisioned
+                # before Hebrew became the default. Only upgrades the stale
+                # "en" that the old bootstrap wrote — a deliberate switch to
+                # English via the toggle persists a different value path and
+                # is left alone only if it's not the old default. (Single
+                # shared demo user; the owner asked for Hebrew-by-default.)
+                if existing.locale == "en":
+                    existing.locale = "he"
+                    await session.commit()
+                    logger.info("demo user locale upgraded en→he: %s", existing.id)
+                else:
+                    logger.info("demo user already provisioned: %s", existing.id)
                 return existing.id
 
             firm = (
@@ -60,7 +71,7 @@ async def ensure_demo_user_exists() -> uuid.UUID | None:
                 password_hash=hash_password(DEMO_USER_PASSWORD),
                 role=UserRole.admin,
                 name=DEMO_USER_NAME,
-                locale="en",
+                locale="he",
             )
             session.add(user)
             await session.commit()

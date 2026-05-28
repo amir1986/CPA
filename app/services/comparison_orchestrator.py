@@ -585,7 +585,10 @@ async def run_orchestrator(run_id: uuid.UUID) -> None:
         # later); only the LLM-authored summaries/verifications honour
         # this locale.
         user = await session.get(User, run.user_id)
-        output_locale = user.locale if (user and user.locale in ("en", "he")) else "en"
+        # Hebrew is the app default — only a user who explicitly stored "en"
+        # gets an English-authored memo. A missing user row or any other
+        # value falls back to Hebrew.
+        output_locale = "en" if (user and user.locale == "en") else "he"
 
         # ── 1. Extract every file ──
         run.status = ComparisonStatus.parsing

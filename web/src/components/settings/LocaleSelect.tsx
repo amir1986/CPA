@@ -18,7 +18,7 @@ export function LocaleSelect({ current }: { current: string }) {
   const ctxLocale = useLocale();
   const tr = (k: string) => t(k, ctxLocale);
   const [pick, setPick] = useState<"en" | "he">(
-    current === "he" ? "he" : "en",
+    current === "en" ? "en" : "he",
   );
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);

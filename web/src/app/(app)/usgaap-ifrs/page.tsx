@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function UsGaapIfrsPage() {
   const cookieStore = await cookies();
-  const locale: Locale = cookieStore.get("cpa_locale")?.value === "he" ? "he" : "en";
+  const locale: Locale = cookieStore.get("cpa_locale")?.value === "en" ? "en" : "he";
   const tr = (k: string, v: Record<string, string | number> = {}) => t(k, locale, v);
 
   let runs: ComparisonRunSummary[] = [];

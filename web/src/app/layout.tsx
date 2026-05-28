@@ -20,7 +20,7 @@ export default async function RootLayout({
   // Locale is persisted as a client-readable cookie by /settings/profile so
   // SSR can flip <html dir> on the first render without an api round-trip.
   const cookieStore = await cookies();
-  const locale = cookieStore.get("cpa_locale")?.value === "he" ? "he" : "en";
+  const locale = cookieStore.get("cpa_locale")?.value === "en" ? "en" : "he";
   const dir = locale === "he" ? "rtl" : "ltr";
 
   return (
