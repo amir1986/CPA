@@ -11,13 +11,15 @@ one is here because we got burned by NOT following it.
 ```
 app/                         # FastAPI backend (Python 3.12)
   api/routes/                # Each router file mounts under a /prefix
-    auth.py                  # /auth/register, /login, /me, /me/locale
+    auth.py                  # /auth/register, /login, /refresh, /verify, /reset, /me, /me/locale
     engagements.py           # /engagements — filters type='comparisons' OUT of lists
     files.py                 # /engagements/{eid}/files — firm-scoped uploads
     comparisons.py           # /comparison/runs — USGAAP <> IFRS feature
     audit_routes.py          # /engagements/{eid}/audit — samples, JE tests, workpapers
+    analyze.py, gl.py, coa.py, clients.py, tweaks.py, admin.py, health.py
     query.py, agent_route.py, knowledge.py, sources.py, ...
-  auth.py                    # current_principal + current_principal_permissive
+  api/auth.py                # current_principal + current_principal_permissive (both
+                             #   fall back to the shared demo user — login was dropped)
   audit/workpapers/          # render_template + render_pdf_bytes + fonts/
   agent/                     # run_agent loop + Tool dataclass
   rag/                       # query_engine, chunker, vector_store, citation
@@ -44,10 +46,30 @@ web/                         # Next.js 15 frontend (App Router, RSC)
 render.yaml                  # Render Blueprint: cpa-api + cpa-web services
 ```
 
-Quick mental model: backend = FastAPI + SQLAlchemy + Postgres + Qdrant +
-Ollama Cloud; frontend = Next 15 RSC + Auth.js + a thin server-only api
-client. Render free tier hosts both services; the web tier rewrites
+Quick mental model: backend = FastAPI + SQLAlchemy 2.0 (async, asyncpg) +
+Postgres + Qdrant + Ollama Cloud; frontend = Next 15 RSC + a thin
+server-only api client. **Auth.js is gone** — `web/src/lib/auth.ts` is a
+stub and the api resolves every request to a shared demo user (see §3
+Auth). Render free tier hosts both services; the web tier rewrites
 `/api/*` straight to the api tier with no extras.
+
+### Request lifecycle (end to end)
+1. Browser hits `web` at `/api/<path>` (or `/api/stream/*` /
+   `/api/comparison/*` for SSE). `next.config.mjs` `rewrites()` forwards
+   `/api/*` to `${INTERNAL_API_BASE}/*` with **no** header manipulation;
+   the `/api/stream` and `/api/comparison` Route Handlers are explicit
+   proxies (they add cold-start retries / SSE passthrough).
+2. `cpa-api` (`app/main.py::create_app`) runs the request through
+   `BaseExceptionGuard` (catches `BaseException`-not-`Exception` panics →
+   problem+json 500), CORS, then the matched router.
+3. A route depends on `current_principal` → resolves the (demo) user, then
+   calls `ensure_in_firm(eid, ...)` for engagement-scoped data (§5).
+4. LLM work goes through `app/llm/client.py` (`OllamaCloudLLM` + KeyRotator,
+   or `FakeLLM` when `CPA_LLM_BACKEND=fake`); RAG retrieval through
+   `app/rag/query_engine.py` against Qdrant (or `MemoryVectorStore`).
+5. Long work (comparison orchestrator, standards ingest) is fired as a
+   tracked `asyncio.create_task`; the route returns immediately and the
+   client polls status over SSE.
 
 ---
 
@@ -112,16 +134,33 @@ failure scenario, not the WHAT — the diff already shows the what.
   `.where(Engagement.type != EngagementType.comparisons)` — there's no
   global filter.
 
-### Auth
-- `current_principal` is the strict default — requires a real
-  Authorization header or X-API-Key.
-- `current_principal_permissive` (in `app/api/auth.py`) falls back to
-  the shared `demo@cpa.example` account when no creds are present.
-  **Use this ONLY for browser-fetched routes that go through the bare
-  `/api/*` rewrite in `web/next.config.mjs`** (which strips the bearer
-  token). Currently only the `/comparison/*` routes use it. Adding it
-  elsewhere creates a multi-tenant data leak — the demo user is shared
-  across every browser.
+### Auth — READ THIS, the model changed
+- **Login was removed** (commit `970e3ca` "drop login flow"). Today
+  **every request resolves to the shared `demo@cpa.example` user.** Both
+  resolvers in `app/api/auth.py` try a real JWT (Bearer) then an admin
+  `X-API-Key`, then fall back to the demo user:
+  - `current_principal` — falls back to demo; raises **503** only if the
+    demo user hasn't been provisioned yet.
+  - `current_principal_permissive` — identical fallback, raises **401**
+    instead of 503 when the demo user is missing.
+  The historical "strict vs permissive" split is now mostly cosmetic. The
+  register/login/refresh/verify/reset endpoints still exist and still mint
+  working JWTs, so a client that DOES send a Bearer resolves to its real
+  user — but nothing in the shipped UI sends one.
+- The demo user is provisioned at startup by `lifespan` →
+  `app/services/demo_bootstrap.py::ensure_demo_user_exists` (idempotent;
+  also created lazily on first request). It is treated as **admin**
+  everywhere.
+- The frontend mirrors this: `web/src/lib/auth.ts` is a **stub** — `auth()`
+  returns a fake session with `accessToken: undefined`. So every browser
+  proxy must forward **without requiring a token**. Gating a proxy on
+  `session.accessToken` silently 401s the whole feature (this is exactly
+  what killed Chat — see footgun table). Attach a Bearer only `if` one
+  exists; never hard-fail on its absence.
+- **Security reality:** this is single-shared-tenant demo mode — do NOT
+  put real multi-tenant customer data through it. The firm-isolation
+  plumbing is still intact and MUST be preserved (§5) so real auth can be
+  restored later without reintroducing leaks.
 
 ### File uploads
 - The `files` table requires a non-null `engagement_id`. The USGAAP <>
@@ -129,18 +168,27 @@ failure scenario, not the WHAT — the diff already shows the what.
   engagement (`type='comparisons'`) — see
   `app/services/comparisons_engagement.py`. Don't make `engagement_id`
   nullable.
-- **Always size-check before `await f.read()`** — reading 50 MB into RAM
-  for each of 10 files is a known OOM vector on the 512 MB free tier.
-  Current code is vulnerable; if you touch it, fix it.
+- **Always size-check `UploadFile.size` BEFORE `await f.read()`** —
+  reading large files into RAM before checking is a known OOM vector on
+  the 512 MB free tier. Both upload paths now do this:
+  `comparisons.create_run` (per-file `MAX_FILE_SIZE` + aggregate
+  `MAX_TOTAL_UPLOAD`, `del body` between iterations) and
+  `files.upload_file`. Keep the early `f.size` guard if you touch either.
 
 ### SSE responses
 - Cloudflare buffers small SSE responses until enough bytes accumulate.
-  Required for every SSE endpoint:
+  Required for **every** SSE endpoint:
   1. 2 KB preamble of SSE comment lines (`: xxx...\n\n`) sent immediately.
   2. Heartbeat (`: heartbeat\n\n`) every 5 s.
   3. Headers: `Cache-Control: no-cache, no-transform`,
      `Content-Encoding: identity`, `X-Accel-Buffering: no`.
   See `stream_run` in `app/api/routes/comparisons.py` for the template.
+  The three SSE endpoints are `comparison/runs/{id}/stream`,
+  `engagements/{eid}/files/{id}/status/stream`, and `query/stream` — all
+  follow the template. SSE consumers (`chat.tsx::parseSSE`,
+  `RunStatusPill`) split on `\n\n` and ignore `:`-comment lines, so the
+  preamble/heartbeat are invisible to them — never emit a bare `data:`
+  frame as a keepalive.
 
 ### Optional dependencies
 - Don't catch only `ImportError` when wrapping optional native libs.
@@ -162,6 +210,20 @@ failure scenario, not the WHAT — the diff already shows the what.
 - **`isinstance(True, int)` returns True in Python.** When validating
   numeric LLM output, use `type(x) in (int, float)` or check explicitly.
 
+### LLM key rotation (`app/llm/`)
+- `OllamaCloudLLM._request` drives a `KeyRotator` state machine (keys are
+  `active` / `cooling` / `disabled`). Outcomes: **429** → cool the key +
+  advance cursor; **401/403** → disable the key permanently; **5xx /
+  network error** → retry the SAME key (the rotator does NOT advance on a
+  plain server-error report) up to `ollama_max_retries_per_key`, then the
+  client calls `rotator.cooldown_key()` to cool it and fan out to the next
+  key. Without that fan-out a single bad key would burn the whole attempt
+  budget — keep it (regression tests in `tests/unit/test_rotator.py`).
+- `stream()` does NOT fail over mid-stream by design.
+- Keys come from `OLLAMA_API_KEYS` (newline/comma separated) or
+  `OLLAMA_API_KEYS_FILE`; `resolved_api_keys()` dedupes + strips. Tests and
+  CI use `CPA_LLM_BACKEND=fake` (`FakeLLM`) so no keys are needed.
+
 ### PDF rendering (fpdf2)
 - Register ALL FOUR font styles (`""`, `"B"`, `"I"`, `"BI"`) under the
   same family name. fpdf2 raises `Undefined font: uniI` if you call
@@ -176,9 +238,18 @@ failure scenario, not the WHAT — the diff already shows the what.
   and an isolated ASCII substitution on failure.
 
 ### Tests
-- 103 unit tests under `tests/unit/`. They DO NOT touch the database —
-  use FakeLLM, MemoryVectorStore, MemoryObjectStore. If a new test
-  needs DB, wire it in carefully or push the assertion to Playwright.
+- **Python 3.12 is required** (`pyproject.toml` pins `>=3.12,<3.13`); a
+  3.11 venv will fail to install the editable package. Create the venv
+  with `python3.12 -m venv .venv` and install with the test extras:
+  `.venv/bin/pip install -e ".[parse,agent,crawl,s3]"` plus
+  `pytest pytest-asyncio ruff`.
+- **157 unit tests** under `tests/unit/`. They DO NOT touch the database —
+  use FakeLLM, MemoryVectorStore, MemoryObjectStore. Run them with the
+  in-memory backends so nothing reaches out to Postgres/MinIO/Ollama:
+  `CPA_LLM_BACKEND=fake CPA_S3_BACKEND=memory CPA_EMAIL_SINK=memory \
+   .venv/bin/python -m pytest tests/unit -q`.
+  If a new test needs DB, wire it in carefully or push the assertion to
+  Playwright.
 - Playwright lives in `web/tests/e2e/`. Run live against the deploy:
   `BASE_URL=https://cpa-web-01mj.onrender.com pnpm exec playwright test ... --project=chromium --workers=1`
 
@@ -195,12 +266,15 @@ failure scenario, not the WHAT — the diff already shows the what.
 - Placeholders use `{var}`: `t("usgaap.could_not_load", locale, { id: runId })`.
 
 ### Server vs client components
-- `apiFetch()` from `web/src/lib/api/client.ts` is SERVER-ONLY (reads
-  the Auth.js session). Calling it from a client component fails silently.
+- `apiFetch()` from `web/src/lib/api/client.ts` is SERVER-ONLY. Calling it
+  from a `"use client"` component fails silently. It reads the (now stub)
+  session for a token — which is always `undefined` — so it effectively
+  forwards unauthenticated; the api's demo-user fallback handles it.
 - Client-side fetches MUST hit `/api/<path>` directly. Next's
   `rewrites()` in `next.config.mjs` forwards to the api with NO header
   manipulation (no bearer token, no path strip). The `/api/cpa/...`
-  pattern in the old codebase is dead — don't use it.
+  Route Handlers are **dead** (verified: nothing in `src/` calls them) —
+  don't use them and don't add new code that does.
 - The `cpa_locale` cookie is `SameSite=Lax`, client-readable. The
   root layout reads it via `cookies()` for SSR `dir`/`lang`; the
   `(app)/layout` reads it again for the client `LocaleProvider`.
@@ -227,10 +301,11 @@ failure scenario, not the WHAT — the diff already shows the what.
   users in the same firm get separate engagements named
   `__comparisons__:<user_id>`. Don't change this — sharing it leaks
   one user's uploads to their firm-mates.
-- The demo user (`demo@cpa.example`) is SHARED across all browsers
-  hitting the unauthenticated `/comparison/*` routes. Anyone using the
-  Skip flow lands on the same principal. Don't put real customer data
-  through demo flows.
+- The demo user (`demo@cpa.example`) is SHARED across all browsers and is
+  now the principal for **every** route (login was dropped), not just
+  `/comparison/*`. Everyone lands on the same admin principal. Don't put
+  real customer data through it. `ensure_in_firm` still runs and still
+  matters — it's what keeps the door shut if/when real auth returns.
 - Never log raw uploaded file contents, JWTs, or user emails at INFO+.
   `app/logging_setup.py` enforces structured logging — use logger
   arguments (`logger.info("event", file_id=fid)`) not f-strings.
@@ -273,6 +348,14 @@ failure scenario, not the WHAT — the diff already shows the what.
 | LLM corpus too big → Ollama 400 | `_build_corpus` in orchestrator | `3b1fd8f` |
 | Background `asyncio.create_task` reaped by GC | comparisons.py `_BACKGROUND_TASKS` set | `f6cee93` (original) |
 | Wheel didn't ship the bundled TTFs | `pyproject.toml force-include` | `b5f68d2` |
+| Chat dead: `/api/stream` proxy 401'd on stub session's empty token | `web/src/app/api/stream/[...path]/route.ts` | audit fix |
+| `files.upload_file` read body before size check → OOM vector | `app/api/routes/files.py` | audit fix |
+| One Ollama key 5xx-ing starved all keys (no fan-out on server error) | `app/llm/client.py` + `ollama_rotator.py` | audit fix |
+| `files`/`query` SSE missing preamble+heartbeat → buffered by edge | `files.py`, `query.py` | audit fix |
+| `query_engine` `top_k or` / `min_score or` discarded an explicit `0` | `app/rag/query_engine.py` | audit fix |
+| `users.locale` server_default stuck at `en` while ORM default = `he` | migration `0006` | audit fix |
+| `ALTER TYPE ADD VALUE` in a DO/txn block → fails on fresh deploy | migration `0002` (autocommit_block) | audit fix |
+| Duplicate `_http_code` def silently shadowing the first | `app/api/errors.py` | audit fix |
 
 ---
 
@@ -285,3 +368,62 @@ failure scenario, not the WHAT — the diff already shows the what.
   before editing.
 - Tests fail in CI but pass locally → check `ruff check .` from the
   repo root and re-run with `[parse,agent,crawl,s3]` extras installed.
+
+---
+
+## 9. Configuration & environment (`app/config.py`)
+
+Settings are pydantic-settings, loaded from env / `.env`, `case_sensitive=
+False`, unknown keys ignored. Defaults target the docker-compose stack.
+
+| Group | Vars (defaults) | Notes |
+|---|---|---|
+| Ollama | `OLLAMA_API_KEYS` / `OLLAMA_API_KEYS_FILE`, `OLLAMA_MODEL` (`gpt-oss:120b`), `OLLAMA_BASE_URL` (`https://ollama.com`), `OLLAMA_MAX_RETRIES_PER_KEY` (2), `OLLAMA_REQUEST_TIMEOUT_SECONDS` (120), `OLLAMA_RATE_LIMIT_COOLDOWN_SECONDS` (60) | keys file wins over inline |
+| Database | `DATABASE_URL` | `_ensure_asyncpg_dsn` rewrites `postgres://`/`postgresql://` → `postgresql+asyncpg://` and `sslmode=` → asyncpg `ssl=`. Don't hand-write the driver. |
+| Qdrant | `QDRANT_URL`, `QDRANT_API_KEY` | |
+| Object store | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_REGION` | `CPA_S3_BACKEND=memory` swaps in `MemoryObjectStore` |
+| Embeddings | `EMBED_MODEL` (multilingual-e5-large), `EMBED_DEVICE` (cpu) | default embedder is the hash embedder unless ml extra + model present |
+| Auth | `JWT_SECRET`, `JWT_ACCESS_TTL_SECONDS` (1800), `JWT_REFRESH_TTL_SECONDS` (30d), `ADMIN_API_KEY` | admin key → synthetic admin principal |
+| SMTP | `SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/STARTTLS` | `CPA_EMAIL_SINK=memory` collects mail in-process |
+| Retrieval | `RETRIEVAL_TOP_K` (8), `RETRIEVAL_MIN_SCORE` (0.25), `RETRIEVAL_LANG_STRICT_HE` (true) | pass `0`/`0.0` explicitly to override — code uses `is None`, not `or` |
+| Misc | `LOG_LEVEL`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `CPA_CORS_ORIGINS`, `CPA_LLM_BACKEND` (`ollama`/`fake`), `AUTH_URL` | |
+
+Backend test trifecta: `CPA_LLM_BACKEND=fake CPA_S3_BACKEND=memory
+CPA_EMAIL_SINK=memory`. `get_settings()` is `lru_cache`d — tests that
+tweak env must clear it.
+
+---
+
+## 10. Backend subsystem map
+
+- **Routers** (mounted in `app/main.py`): `health`, `auth`, `clients`,
+  `engagements`, `files`, `query`, `sources`, `analyze`, `audit_routes`,
+  `coa`, `gl`, `tweaks`, `admin`, `agent_route`, `knowledge`,
+  `comparisons`. Each owns its `/prefix`.
+- **DB models** (`app/db/models/`, one file per domain): `auth_models`
+  (Firm/User/UserTweaks/AuthToken), `engagement` (Client/Engagement),
+  `files`, `books` (ChartOfAccount/GLEntry/TrialBalance/CoaMapping), `bank`,
+  `comparison_models`, `audit_models`, `standards_ingest`,
+  `observability` (QueryLog/AgentRun/AuditLog). Migrations
+  `0001`→`0006`, single linear head — verify with
+  `python -c "from alembic.script import ScriptDirectory; ..."` or just
+  keep `down_revision` chained.
+- **RAG** (`app/rag/`): `query_engine` (retrieve → prompt → validate
+  citations → refuse if top score `< min_score`), `chunker`,
+  `vector_store` (Qdrant + `MemoryVectorStore`), `citation`,
+  `knowledge_graph`, `lang` (he/en detection).
+- **Comparison feature** (`app/services/comparison_orchestrator.py`):
+  parse uploads → detect framework with calibrated confidence → identify
+  issues → retrieve US GAAP + IFRS standards side-by-side → verifier pass.
+  Hebrew memo prose is generated/pre-translated and cached on
+  `ComparisonRun.translations_he`. Memo assembly + i18n live in
+  `comparisons.py`; PDF render in `audit/workpapers/renderer.py`.
+- **Audit** (`app/audit/`): `sampling`, `three_way_match`, JE tests
+  (`benford`, `round_amounts`, `late_postings`, `weekend_holiday`,
+  `unusual_user`, `threshold`), workpaper rendering.
+- **Ingest**: `ingest_docs/extractors/` (pdf/docx/csv/xlsx → spans);
+  `ingest_standards/` (discovery → robots → fetch → parse → pipeline,
+  driven from `admin` route as a tracked background task).
+- **Storage/LLM/email** are all behind factories with in-memory test
+  doubles: `get_object_store`, `get_llm`, email memory sink. Reset
+  helpers exist for tests (`reset_object_store`, `reset_llm`).
