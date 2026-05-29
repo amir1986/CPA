@@ -132,6 +132,13 @@ class OllamaCloudLLM:
                 if resp.status_code >= 500:
                     self._rotator.report_server_error(state.key, reason=f"http_{resp.status_code}")
                     _llm_metric("server_error")
+                    # Once a key has 5xx'd past its per-key retry budget, cool
+                    # it and move the cursor on so the loop fans out to a
+                    # healthy key instead of burning the whole attempt budget
+                    # on one bad key (the rotator keeps handing back the same
+                    # still-ACTIVE key on a plain server-error report).
+                    if state.consecutive_failures > self._max_retries:
+                        self._rotator.cooldown_key(state.key)
                     await asyncio.sleep(0.5 + random.random())
                     continue
                 resp.raise_for_status()
@@ -141,6 +148,8 @@ class OllamaCloudLLM:
             except httpx.RequestError as exc:
                 self._rotator.report_server_error(state.key, reason=type(exc).__name__)
                 _llm_metric("server_error")
+                if state.consecutive_failures > self._max_retries:
+                    self._rotator.cooldown_key(state.key)
                 await asyncio.sleep(0.5 + random.random())
                 continue
         _llm_metric("exhausted")

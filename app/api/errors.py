@@ -162,16 +162,3 @@ def _http_code(status: int) -> str:
         429: "rate_limited",
         503: "unavailable",
     }.get(status, f"http_{status}")
-
-
-def _http_code(status: int) -> str:
-    return {
-        400: "bad_request",
-        401: "unauthorized",
-        403: "forbidden",
-        404: "not_found",
-        409: "conflict",
-        422: "unprocessable",
-        429: "rate_limited",
-        503: "unavailable",
-    }.get(status, f"http_{status}")

@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
  * would mark cpa-web as unhealthy (and Render would refuse to route
  * traffic to it), even though the web process itself is fine.
  *
- * For a "is the whole stack healthy?" check, hit /api/cpa/readyz —
+ * For a "is the whole stack healthy?" check, hit /api/readyz —
  * that does check downstream deps.
  */
 export async function GET() {

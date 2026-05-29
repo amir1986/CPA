@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, status
@@ -157,7 +158,14 @@ async def refresh(
         claims = decode_token(payload.refresh_token, expected_type="refresh")
     except InvalidTokenError as exc:
         raise ApiError(status=401, code="invalid_token", detail=str(exc)) from exc
-    user = await session.get(User, claims.sub)
+    # `claims.sub` is a str; the User PK is a UUID. Convert explicitly (as
+    # every other principal path does) so a malformed sub yields a clean 401
+    # rather than a 500 from a failed implicit coercion in the driver.
+    try:
+        user_id = uuid.UUID(claims.sub)
+    except (ValueError, TypeError) as exc:
+        raise ApiError(status=401, code="invalid_token", detail="malformed claims") from exc
+    user = await session.get(User, user_id)
     if user is None:
         raise ApiError(status=401, code="invalid_token", detail="user no longer exists")
     return _tokens(user)

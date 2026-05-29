@@ -99,6 +99,10 @@ async def query_stream(
     )
 
     async def gen() -> AsyncIterator[bytes]:
+        # 2 KB preamble so Cloudflare / Render's edge flushes immediately
+        # instead of buffering a short answer until enough bytes accumulate
+        # (CLAUDE.md §3 SSE responses, commit 6b7a5b7).
+        yield (b": " + b"x" * 2048 + b"\n\n")
         # Stream the answer body.
         chunk = result.answer
         # Yield in ~24-char pieces so a UI sees progressive deltas.
@@ -123,7 +127,8 @@ async def query_stream(
         gen(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
+            "Content-Encoding": "identity",
             "X-Accel-Buffering": "no",   # nginx hint for SSE
         },
     )

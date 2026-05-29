@@ -174,6 +174,25 @@ class KeyRotator:
             state.consecutive_failures += 1
             state.last_error = reason
 
+    def cooldown_key(self, key: str, *, seconds: float | None = None) -> None:
+        """Force a key into cooldown and advance the cursor.
+
+        Used by the HTTP client once a key has 5xx'd past its per-key retry
+        budget: without moving on, ``acquire`` keeps handing back the same
+        still-ACTIVE key, so a single unhealthy key would consume the whole
+        retry budget while the other healthy keys are never tried. Cooling +
+        advancing here lets the next ``acquire`` fan out to a good key.
+        """
+        with self._lock:
+            state = self._find_locked(key)
+            if state is None:
+                return
+            cooldown = self._cooldown if seconds is None else max(0.0, float(seconds))
+            state.status = KeyStatus.COOLING
+            state.cooldown_until = self._clock() + cooldown
+            state.last_error = state.last_error or "server_error"
+            self._advance_locked()
+
     # ──────────────── introspection ────────────────
 
     def snapshot(self) -> RotatorSnapshot:

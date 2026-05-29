@@ -1,10 +1,10 @@
 /**
  * Server-only typed API client.
  *
- * Always called from server components / route handlers — the browser
- * never sees the access token, only the encrypted Auth.js cookie. To call
- * the backend from the browser, go through one of the wrapper Route
- * Handlers under `/api/cpa/*`.
+ * Always called from server components / route handlers. To call the
+ * backend from the browser, fetch `/api/<path>` directly — Next's
+ * `rewrites()` in next.config.mjs forwards it to the api (the `/api/cpa/*`
+ * wrapper handlers are dead; don't use them).
  */
 
 import { auth } from "@/lib/auth";

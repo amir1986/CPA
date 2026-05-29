@@ -81,6 +81,15 @@ async def upload_file(
     except ValueError as exc:
         raise ApiError(status=400, code="bad_request", detail=f"unknown kind: {kind}") from exc
 
+    # Reject oversized files BEFORE pulling them into RAM. Starlette
+    # populates UploadFile.size from the multipart part as it spools, so we
+    # know the size without buffering 200 MB into the 512 MB free-tier
+    # worker. Reading-then-checking (the old order) was a known OOM vector
+    # (CLAUDE.md §3): a single fat upload could pin the worker long enough
+    # for Render's edge to throttle the request. The post-read check stays
+    # as a belt-and-suspenders guard for clients that omit a size.
+    if file.size is not None and file.size > MAX_FILE_SIZE:
+        raise ApiError(status=413, code="too_large", detail="file exceeds 200 MB limit")
     body = await file.read()
     if len(body) == 0:
         raise ApiError(status=400, code="empty_file", detail="uploaded file is empty")
@@ -147,9 +156,15 @@ async def file_status_stream(
         raise ApiError(status=404, code="not_found", detail="file not found")
 
     async def gen() -> AsyncIterator[bytes]:
+        # 2 KB preamble so Cloudflare / Render's edge flushes immediately
+        # instead of buffering the stream until enough bytes accumulate
+        # (CLAUDE.md §3 SSE responses, commit 6b7a5b7). Without it the
+        # upload-status pill hangs on its initial value.
+        yield (b": " + b"x" * 2048 + b"\n\n")
         factory = get_sessionmaker()
         last: str | None = None
-        for _ in range(120):  # ≤ 2 minutes, polling every 1s
+        last_heartbeat = 0
+        for tick in range(120):  # ≤ 2 minutes, polling every 1s
             async with factory() as s2:
                 row = await s2.get(File, file_id)
                 if row is None:
@@ -162,12 +177,21 @@ async def file_status_stream(
             if cur in {"done", "failed"}:
                 yield b"event: done\ndata: {}\n\n"
                 return
+            # Heartbeat every 5 s forces a flush and keeps idle proxies from
+            # dropping the connection.
+            if tick - last_heartbeat >= 5:
+                yield b": heartbeat\n\n"
+                last_heartbeat = tick
             await asyncio.sleep(1)
 
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Content-Encoding": "identity",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

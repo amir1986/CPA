@@ -48,8 +48,11 @@ async def answer_question(
             return _NullTracer()
 
     settings = get_settings()
-    top_k = top_k or settings.retrieval_top_k
-    min_score = min_score or settings.retrieval_min_score
+    # Use `is None` so an explicit caller-supplied 0 (top_k=0, or
+    # min_score=0.0 meaning "accept everything") isn't silently replaced by
+    # the configured default.
+    top_k = settings.retrieval_top_k if top_k is None else top_k
+    min_score = settings.retrieval_min_score if min_score is None else min_score
     language = detect_language(question)
 
     store = store or get_vector_store()

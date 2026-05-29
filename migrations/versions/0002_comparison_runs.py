@@ -43,14 +43,13 @@ def _create_enum_idempotent(name: str, values: tuple[str, ...]) -> None:
 def upgrade() -> None:
     # 1. Extend the existing engagement_type enum with 'comparisons' so the
     #    hidden per-user comparisons engagement can be created.
-    op.execute(
-        """
-        DO $$ BEGIN
-            ALTER TYPE engagement_type ADD VALUE IF NOT EXISTS 'comparisons';
-        EXCEPTION WHEN undefined_object THEN null;
-        END $$;
-        """
-    )
+    #    Postgres forbids `ALTER TYPE ... ADD VALUE` inside a transaction
+    #    block / DO block, so it must run in autocommit. `IF NOT EXISTS`
+    #    keeps it idempotent across re-runs and pre-existing deploys.
+    with op.get_context().autocommit_block():
+        op.execute(
+            "ALTER TYPE engagement_type ADD VALUE IF NOT EXISTS 'comparisons'"
+        )
 
     # 2. New enums for the comparison-runs subsystem.
     _create_enum_idempotent("comparison_status", ("parsing", "detecting", "comparing", "done", "failed"))

@@ -123,6 +123,26 @@ def test_server_error_does_not_advance_cursor() -> None:
     assert snap.keys[0]["last_error"] == "server_error"
 
 
+def test_cooldown_key_cools_and_advances_to_next_key() -> None:
+    # Regression: a single key returning 5xx forever used to starve the
+    # other keys because report_server_error never moved the cursor. Once
+    # the client cools the bad key via cooldown_key, acquire must fan out
+    # to the next healthy key instead of handing back the same one.
+    r, _ = make_rotator(["k1", "k2"], cooldown=30)
+    assert r.acquire().key == "k1"
+    r.report_server_error("k1")
+    r.cooldown_key("k1")
+    assert r.acquire().key == "k2"
+    snap = r.snapshot()
+    assert snap.keys[0]["status"] == "cooling"
+
+
+def test_cooldown_key_unknown_is_a_no_op() -> None:
+    r, _ = make_rotator(["k1"])
+    r.cooldown_key("nope")  # must not raise
+    assert r.acquire().key == "k1"
+
+
 def test_success_resets_failure_counter() -> None:
     r, _ = make_rotator(["k1", "k2"])
     r.acquire()
