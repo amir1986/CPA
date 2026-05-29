@@ -79,19 +79,17 @@ git clone --branch claude/cpa-api-oracle-migration-BqigD \
 # create + fill the env files (step 4) BEFORE running bootstrap
 cp /home/ubuntu/cpa/deploy/oracle/env/cpa-api.env.example /home/ubuntu/cpa/.env
 cp /home/ubuntu/cpa/deploy/oracle/env/cpa-web.env.example /home/ubuntu/cpa/web/.env
-nano /home/ubuntu/cpa/.env          # fill REPLACE_ME, set your domain
+nano /home/ubuntu/cpa/.env          # fill REPLACE_ME, set https://<your-ip>.sslip.io
 nano /home/ubuntu/cpa/web/.env
 chmod 600 /home/ubuntu/cpa/.env /home/ubuntu/cpa/web/.env
 
-# set the real domain in the Nginx file
-nano /home/ubuntu/cpa/deploy/oracle/nginx/cpa.conf   # server_name YOUR_DOMAIN;
-
-# run it
+# run it (sets up runtimes, deps, build, systemd units, Nginx on HTTP)
 bash /home/ubuntu/cpa/deploy/oracle/scripts/bootstrap.sh
 ```
 
-Then do step 6 (certbot) and step 7 (the two firewall layers) by hand - they need
-your domain and the OCI console. The rest of this doc explains each step.
+Then do step 7 (the two firewall layers - needs the OCI console) and step 6
+(point Nginx at `<your-ip>.sslip.io` and run certbot for HTTPS). Do firewall
+BEFORE certbot. The rest of this doc explains each step.
 
 ---
 
@@ -157,7 +155,8 @@ chmod 600 /home/ubuntu/cpa/.env /home/ubuntu/cpa/web/.env
 Pull the actual values from the Render dashboard (cpa-api and cpa-web -> Environment).
 Generate fresh secrets where it makes sense: `openssl rand -base64 32` for
 `JWT_SECRET`, `ADMIN_API_KEY`, `AUTH_SECRET`. Set `DATABASE_URL` to your Neon/
-Supabase URL. Set `AUTH_URL` and `CPA_CORS_ORIGINS` to `https://YOUR_DOMAIN`.
+Supabase URL. Set `AUTH_URL` and `CPA_CORS_ORIGINS` to `https://<your-ip>.sslip.io`
+(see step 6 - you have no domain, so we use the free sslip.io host for your IP).
 
 For several Ollama keys, leave `OLLAMA_API_KEYS` empty and use a key file
 (systemd `EnvironmentFile` cannot hold multi-line values):
@@ -220,29 +219,57 @@ journalctl -u cpa-api -n 50 --no-pager     # confirm migrations ran + uvicorn up
 
 ## 6. Reverse proxy + HTTPS (replaces Render's automatic SSL)
 
-You have a domain, so point its A record at the VM's public IP first, then:
+**You don't have a domain, and Oracle does not give you a public one.** An OCI
+instance only gets a public **IP** plus a *private* internal hostname
+(`...oraclevcn.com`) that is not reachable from the internet. Let's Encrypt will
+not issue a normal cert for a bare IP, so we use **sslip.io**: a free, no-signup
+wildcard DNS where `<your-ip>.sslip.io` automatically resolves to your IP. That
+gives Certbot a real hostname and you get genuine green-padlock HTTPS.
+
+Pick your hostname from the VM's public IP (no DNS setup needed - sslip.io just
+works). If your IP is `203.0.113.5`, your host is `203.0.113.5.sslip.io`:
 
 ```bash
-# server_name must be your real domain
-sudo sed -i 's/YOUR_DOMAIN/your.domain.com/' /etc/nginx/sites-available/cpa.conf
+# capture the host once so the commands below are copy-paste
+IP=$(curl -s ifconfig.me)            # or read it from the OCI console
+HOST="${IP}.sslip.io"
+echo "public host = ${HOST}"
+dig +short "${HOST}"                  # should print your IP (proves resolution)
+
+# point Nginx server_name at it
+sudo sed -i "s/YOUR_DOMAIN/${HOST}/" /etc/nginx/sites-available/cpa.conf
 sudo nginx -t && sudo systemctl reload nginx
 
 # Let's Encrypt via certbot (edits the Nginx file to add 443 + http->https redirect)
 sudo snap install --classic certbot
 sudo ln -sf /snap/bin/certbot /usr/bin/certbot
-sudo certbot --nginx -d your.domain.com --redirect -m you@example.com --agree-tos
+sudo certbot --nginx -d "${HOST}" --redirect -m you@example.com --agree-tos
 
 # auto-renew is installed by the certbot snap; confirm:
 sudo certbot renew --dry-run
 ```
+
+> Certbot's HTTP-01 challenge needs port 80 reachable from the internet, so do
+> **step 7 (open 80/443 in both firewall layers) BEFORE running certbot**, or the
+> challenge times out.
+
+> sslip.io and nip.io are on the Public Suffix List, so each `<ip>.sslip.io` is a
+> separate registrable name for Let's Encrypt rate-limiting - issuance works fine.
+> If a network you're on blocks sslip.io, a free `*.duckdns.org` subdomain (quick
+> signup + token, A record set to your IP) works the same way with certbot.
+
+Set `AUTH_URL` and `CPA_CORS_ORIGINS` in `/home/ubuntu/cpa/.env` and `AUTH_URL`
+in `/home/ubuntu/cpa/web/.env` to `https://<your-ip>.sslip.io` to match. (If you
+edit `web/.env` after the first build, rebuild web - see step 9 / footgun 3.)
 
 The Nginx config (`deploy/oracle/nginx/cpa.conf`) proxies everything to the web
 tier on 3000 and **disables `proxy_buffering`** so SSE (comparison runs, file
 status, query stream) is not buffered at the edge - this matches the app's own
 SSE preamble/heartbeat handling.
 
-If you ever run without a domain: keep the HTTP-only config (port 80 only) and add
-certbot later - Let's Encrypt will not issue for a bare IP.
+If you'd rather skip TLS entirely (private demo only): leave the HTTP-only config
+on port 80, set the env URLs to `http://<your-ip>`, and skip certbot. Browsers
+will mark it "Not secure".
 
 ---
 
@@ -286,20 +313,21 @@ sudo iptables -L INPUT --line-numbers          # verify ACCEPT sits above REJECT
 curl -s http://127.0.0.1:8000/healthz
 curl -s http://127.0.0.1:3000/api/health
 # from your LAPTOP (proves both firewall layers are open):
-curl -s https://your.domain.com/api/healthz
+curl -s http://<your-ip>.sslip.io/api/healthz     # before certbot; https after
 ```
 
 ---
 
 ## 8. Verify the migration
 
-Run from your **laptop**, not the VM:
+Run from your **laptop**, not the VM (replace with your `<ip>.sslip.io` host):
 
 ```bash
-curl -s https://your.domain.com/api/healthz   # {"status":"ok"}  (api liveness via web rewrite)
-curl -s https://your.domain.com/api/readyz    # {"ready":true,...} once Ollama keys are set
-curl -s https://your.domain.com/api/health    # web tier health
-curl -sI https://your.domain.com/             # web homepage, 200, valid TLS
+HOST=203.0.113.5.sslip.io                      # your VM IP + .sslip.io
+curl -s https://$HOST/api/healthz   # {"status":"ok"}  (api liveness via web rewrite)
+curl -s https://$HOST/api/readyz    # {"ready":true,...} once Ollama keys are set
+curl -s https://$HOST/api/health    # web tier health
+curl -sI https://$HOST/             # web homepage, 200, valid TLS
 ```
 
 Confirm these match what Render returned. Then prove it survives a reboot and that
@@ -312,7 +340,7 @@ sudo reboot
 
 # env-dependent checks on the VM:
 journalctl -u cpa-api -n 80 --no-pager        # DB connect + migrations clean (no asyncpg errors)
-curl -s https://your.domain.com/api/readyz    # Ollama keys loaded
+curl -s https://$HOST/api/readyz              # Ollama keys loaded
 # exercise a real DB + Qdrant path through the UI (e.g. an engagement list / a query).
 ```
 

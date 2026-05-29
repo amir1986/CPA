@@ -88,8 +88,12 @@ sudo nginx -t
 sudo systemctl reload nginx
 
 echo
+IP_GUESS="$(curl -s ifconfig.me || true)"
 echo "==> bootstrap done. Remaining MANUAL steps (see deploy/oracle/README.md):"
+echo "    No domain needed - use the free sslip.io host for your IP:"
+echo "      HOST=${IP_GUESS:-<your-ip>}.sslip.io"
 echo "    1. OCI console: add Security List ingress for tcp/80 and tcp/443"
 echo "    2. VM firewall: open 80/443 in iptables and persist (README step 7)"
-echo "    3. certbot --nginx -d YOUR_DOMAIN   (README step 6)"
-echo "    4. verify from your laptop:  curl https://YOUR_DOMAIN/api/healthz"
+echo "    3. sudo sed -i \"s/YOUR_DOMAIN/\${HOST}/\" /etc/nginx/sites-available/cpa.conf && sudo systemctl reload nginx"
+echo "    4. sudo certbot --nginx -d \"\${HOST}\"   (do AFTER opening port 80; README step 6)"
+echo "    5. verify from your laptop:  curl https://\${HOST}/api/healthz"
