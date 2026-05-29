@@ -1,0 +1,35 @@
+[Unit]
+Description=CPA API (FastAPI / uvicorn)
+# Wait for real network + DNS before starting (we connect out to Neon/Qdrant/Ollama).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/cpa
+# All secrets live here, chmod 600, never committed. systemd parses KEY=VALUE
+# one per line - no shell expansion, no multi-line values (see the env template).
+EnvironmentFile=/home/ubuntu/cpa/.env
+
+# Run migrations BEFORE the server, exactly like Render's startCommand
+# ("alembic upgrade head && uvicorn ..."). If migrations fail the unit fails
+# loudly instead of serving against an empty/stale schema.
+ExecStartPre=/home/ubuntu/cpa/.venv/bin/python -m alembic upgrade head
+
+# Bind to localhost only - the api is private. Nginx (and the web tier) reach
+# it via 127.0.0.1:8000; it is never exposed on the public interface.
+ExecStart=/home/ubuntu/cpa/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+Restart=always
+RestartSec=3
+# Cold migrations on a fresh DB can take a while; don't let systemd kill startup early.
+TimeoutStartSec=300
+
+# Light hardening (the app writes nothing outside its dir in memory-backend mode).
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,43 @@
+# Optional: SSH into the Oracle VM and redeploy on push.
+#
+# This is OFF unless you add the four repo secrets below. It does the same thing
+# as deploy/oracle/scripts/deploy.sh, remotely.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   OCI_SSH_HOST   public IP or hostname of the VM
+#   OCI_SSH_USER   ubuntu
+#   OCI_SSH_KEY    the PRIVATE key whose public half is in the VM's authorized_keys
+#   OCI_SSH_PORT   22 (optional; defaults to 22)
+#
+# Networking note: GitHub's runners must be able to reach port 22 on the VM. If
+# you locked SSH down to your own IP in the OCI Security List, either widen it or
+# switch to a self-hosted/pull-based deploy instead.
+
+name: deploy-oracle
+
+on:
+  push:
+    branches:
+      - claude/cpa-api-oracle-migration-BqigD
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-oracle
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and redeploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.OCI_SSH_HOST }}
+          username: ${{ secrets.OCI_SSH_USER }}
+          key: ${{ secrets.OCI_SSH_KEY }}
+          port: ${{ secrets.OCI_SSH_PORT || 22 }}
+          script_stop: true
+          command_timeout: "20m"
+          script: |
+            cd /home/ubuntu/cpa
+            BRANCH=claude/cpa-api-oracle-migration-BqigD bash deploy/oracle/scripts/deploy.sh

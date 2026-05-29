@@ -1,0 +1,29 @@
+[Unit]
+Description=CPA Web (Next.js 15)
+After=network-online.target cpa-api.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/cpa/web
+# Runtime env (INTERNAL_API_BASE, AUTH_SECRET, AUTH_URL, ...). Note: NEXT_PUBLIC_*
+# vars are baked in at BUILD time (pnpm build), so they must also be present in
+# web/.env when you build - changing them later requires a rebuild, not just a restart.
+EnvironmentFile=/home/ubuntu/cpa/web/.env
+Environment=NODE_ENV=production
+
+# Invoke Next directly via node so we don't depend on pnpm/corepack being on
+# systemd's minimal PATH. Bind to localhost only; Nginx is the public edge.
+ExecStart=/usr/bin/node /home/ubuntu/cpa/web/node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3000
+
+Restart=always
+RestartSec=3
+TimeoutStartSec=120
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
