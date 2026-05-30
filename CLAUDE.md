@@ -377,16 +377,22 @@ failure scenario, not the WHAT — the diff already shows the what.
 Settings are pydantic-settings, loaded from env / `.env`, `case_sensitive=
 False`, unknown keys ignored. Defaults target the docker-compose stack.
 
-**LLM model is pinned to `qwen3.5:397b-cloud`.** Every AI call — RAG
-(`query_engine`), the comparison orchestrator, the agent loop, and Hebrew
-translation — goes through the single `get_llm()` → `OllamaCloudLLM` client,
-which reads `settings.ollama_model`. That default is hardcoded in
-`app/config.py`, and the deployment configs (`render.yaml`,
-`docker-compose.yml`, the Helm `api-secret.yaml`, `.env.example`) all set
-`OLLAMA_MODEL=qwen3.5:397b-cloud` so nothing overrides it back. To change the
-model, update ALL of those places together — changing only `app/config.py`
-lets the deploy env win. `gpt-oss:120b` is the known-good fallback the keys
-are entitled to.
+**Two models, both HARDCODED in `app/config.py` (NOT env-driven).** The AI
+surface uses two Ollama Cloud models:
+- `OLLAMA_MODEL = "qwen3-vl:235b-cloud"` → comparison orchestrator, file
+  processing, Hebrew translation, agent loop. Served by `get_llm()`.
+- `OLLAMA_RAG_MODEL = "gpt-oss:120b-cloud"` → RAG retrieval-answering
+  (`query_engine.answer_question`) ONLY. Served by `get_rag_llm()`.
+
+Both are module-level **constants** in `app/config.py`, exposed as read-only
+`Settings.ollama_model` / `Settings.ollama_rag_model` **properties** — so
+they are intentionally NOT read from the environment. There is deliberately
+no `OLLAMA_MODEL` env var anymore (`render.yaml`, `docker-compose.yml`, the
+Helm `api-secret.yaml`, `.env.example` were stripped of it). To change a
+model, edit the two constants — that's the single source of truth. This
+exists because an `OLLAMA_MODEL` env var silently overriding the code once
+caused a prod outage. `get_llm()` and `get_rag_llm()` are separate cached
+singletons; `OllamaCloudLLM(model=...)` pins the per-feature tag.
 
 **Before switching models, VERIFY the account is entitled to the new tag.**
 We tried pinning `qwen3.5:cloud` and the whole AI surface went down: Ollama
@@ -403,7 +409,7 @@ keys stay dead until the process restarts (a redeploy resets rotator state).
 
 | Group | Vars (defaults) | Notes |
 |---|---|---|
-| Ollama | `OLLAMA_API_KEYS` / `OLLAMA_API_KEYS_FILE`, `OLLAMA_MODEL` (`qwen3.5:397b-cloud`), `OLLAMA_BASE_URL` (`https://ollama.com`), `OLLAMA_MAX_RETRIES_PER_KEY` (2), `OLLAMA_REQUEST_TIMEOUT_SECONDS` (120), `OLLAMA_RATE_LIMIT_COOLDOWN_SECONDS` (60) | keys file wins over inline |
+| Ollama | `OLLAMA_API_KEYS` / `OLLAMA_API_KEYS_FILE`, `OLLAMA_BASE_URL` (`https://ollama.com`), `OLLAMA_MAX_RETRIES_PER_KEY` (2), `OLLAMA_REQUEST_TIMEOUT_SECONDS` (120), `OLLAMA_RATE_LIMIT_COOLDOWN_SECONDS` (60) | models are hardcoded constants, NOT env (see above); keys file wins over inline |
 | Database | `DATABASE_URL` | `_ensure_asyncpg_dsn` rewrites `postgres://`/`postgresql://` → `postgresql+asyncpg://` and `sslmode=` → asyncpg `ssl=`. Don't hand-write the driver. |
 | Qdrant | `QDRANT_URL`, `QDRANT_API_KEY` | |
 | Object store | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_REGION` | `CPA_S3_BACKEND=memory` swaps in `MemoryObjectStore` |

@@ -95,7 +95,6 @@ All configuration is via env vars; see `.env.example` for the full list. Minimum
 | --- | --- | --- | --- |
 | `OLLAMA_API_KEYS` | api | **yes** | `key1\nkey2\nkey3` (newline or comma) |
 | `OLLAMA_BASE_URL` | api | no | `https://ollama.com` |
-| `OLLAMA_MODEL` | api | no | `qwen3.5:397b-cloud` |
 | `DATABASE_URL` | api | yes | `postgresql+asyncpg://cpa:cpa@postgres:5432/cpa` |
 | `QDRANT_URL` | api | yes | `http://qdrant:6333` |
 | `S3_ENDPOINT_URL` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` | api | yes | MinIO defaults in compose |

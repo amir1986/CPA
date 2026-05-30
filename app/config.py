@@ -8,6 +8,16 @@ from pathlib import Path
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# ── Hardcoded model pins (NOT environment-driven) ──
+# We pin the two Ollama Cloud models in code, on purpose. An `OLLAMA_MODEL`
+# env var once silently overrode the code default and took the whole AI
+# surface down (a 403 on an un-entitled tag disabled every key). Exposing
+# these via env is a footgun, so they are constants here — to change a
+# model, edit these two lines (and verify the tag is entitled: a 200, not a
+# 403, from POST https://ollama.com/api/chat with one of the keys).
+OLLAMA_MODEL = "qwen3-vl:235b-cloud"  # comparison, file processing, translation, agent
+OLLAMA_RAG_MODEL = "gpt-oss:120b-cloud"  # RAG retrieval-answering only
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -27,7 +37,21 @@ class Settings(BaseSettings):
         description="Optional path to a file containing keys (one per line). Takes precedence over OLLAMA_API_KEYS if set.",
     )
     ollama_base_url: str = "https://ollama.com"
-    ollama_model: str = "qwen3.5:397b-cloud"
+
+    @property
+    def ollama_model(self) -> str:
+        """Default model (comparison, file processing, translation, agent).
+
+        Hardcoded via ``config.OLLAMA_MODEL`` — intentionally NOT read from
+        the environment so a stray ``OLLAMA_MODEL`` can never override it.
+        """
+        return OLLAMA_MODEL
+
+    @property
+    def ollama_rag_model(self) -> str:
+        """RAG-only model. Hardcoded via ``config.OLLAMA_RAG_MODEL``."""
+        return OLLAMA_RAG_MODEL
+
     ollama_rate_limit_cooldown_seconds: float = 60.0
     ollama_max_retries_per_key: int = 2
     ollama_request_timeout_seconds: float = 120.0

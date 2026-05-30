@@ -85,7 +85,7 @@ class FakeLLM:
 
 
 class OllamaCloudLLM:
-    def __init__(self, rotator: KeyRotator | None = None) -> None:
+    def __init__(self, rotator: KeyRotator | None = None, *, model: str | None = None) -> None:
         settings = get_settings()
         keys = settings.resolved_api_keys()
         if rotator is None:
@@ -94,7 +94,9 @@ class OllamaCloudLLM:
             rotator = KeyRotator(keys, cooldown_seconds=settings.ollama_rate_limit_cooldown_seconds)
         self._rotator = rotator
         self._base_url = settings.ollama_base_url.rstrip("/")
-        self._model = settings.ollama_model
+        # `model` lets callers pin a per-feature tag (e.g. RAG uses
+        # ollama_rag_model); falls back to the global default otherwise.
+        self._model = model or settings.ollama_model
         self._timeout = settings.ollama_request_timeout_seconds
         self._max_retries = settings.ollama_max_retries_per_key
 
@@ -215,20 +217,34 @@ def _parse_retry_after(header: str | None) -> float | None:
 # ──────────────── factory ────────────────
 
 
-_singleton: LLMClient | None = None
+_default_singleton: LLMClient | None = None
+_rag_singleton: LLMClient | None = None
+
+
+def _make_llm(*, model: str | None = None) -> LLMClient:
+    backend = os.environ.get("CPA_LLM_BACKEND", "ollama").lower()
+    if backend == "fake":
+        return FakeLLM()
+    return OllamaCloudLLM(model=model)
 
 
 def get_llm() -> LLMClient:
-    global _singleton
-    if _singleton is None:
-        backend = os.environ.get("CPA_LLM_BACKEND", "ollama").lower()
-        if backend == "fake":
-            _singleton = FakeLLM()
-        else:
-            _singleton = OllamaCloudLLM()
-    return _singleton
+    """Default client (comparison, file processing, translation, agent)."""
+    global _default_singleton
+    if _default_singleton is None:
+        _default_singleton = _make_llm()
+    return _default_singleton
+
+
+def get_rag_llm() -> LLMClient:
+    """RAG retrieval-answering client, pinned to ``settings.ollama_rag_model``."""
+    global _rag_singleton
+    if _rag_singleton is None:
+        _rag_singleton = _make_llm(model=get_settings().ollama_rag_model)
+    return _rag_singleton
 
 
 def reset_llm() -> None:
-    global _singleton
-    _singleton = None
+    global _default_singleton, _rag_singleton
+    _default_singleton = None
+    _rag_singleton = None

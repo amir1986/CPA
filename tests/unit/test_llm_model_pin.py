@@ -1,42 +1,58 @@
-"""Regression guard: the Ollama model is pinned to ``qwen3.5:397b-cloud``.
+"""Regression guard: the two Ollama models are HARDCODED (not env-driven).
 
-Every AI call — RAG (`query_engine`), the comparison orchestrator, the
-agent loop and Hebrew translation — flows through the single
-`OllamaCloudLLM` client, which reads `settings.ollama_model`. We pin that
-default in code (and mirror it in every deploy config) so the model can't
-silently change. NOTE: a pinned tag must be one the account is *entitled*
-to — an un-entitled tag (e.g. `qwen3.5:cloud`) returns 403 and disables
-every key (see CLAUDE.md §9). `gpt-oss:120b` is the known-good fallback.
-If someone changes the default, this test fails loudly and points them at
-the deploy configs that must change in lockstep.
+The AI surface uses two models, both pinned as constants in `app/config.py`:
+- ``OLLAMA_MODEL = "qwen3-vl:235b-cloud"`` — comparison, file processing,
+  Hebrew translation, agent (served by `get_llm()`).
+- ``OLLAMA_RAG_MODEL = "gpt-oss:120b-cloud"`` — RAG retrieval-answering only
+  (served by `get_rag_llm()`).
+
+They are exposed as read-only `Settings` properties, so a stray `OLLAMA_MODEL`
+env var can NOT override them (that override once caused a prod outage — see
+CLAUDE.md §9). These tests lock the values, the per-feature client pinning,
+and the env-independence. Entitlement (a real 200 vs 403 from Ollama Cloud)
+is covered by the opt-in live test in ``tests/integration/test_llm_live.py``.
 """
 
 from __future__ import annotations
 
-from app.config import Settings, get_settings
+from app.config import OLLAMA_MODEL, OLLAMA_RAG_MODEL, Settings, get_settings
 from app.llm.client import OllamaCloudLLM, _chat_payload
 from app.llm.ollama_rotator import KeyRotator
 
-PINNED_MODEL = "qwen3.5:397b-cloud"
+EXPECTED_DEFAULT = "qwen3-vl:235b-cloud"
+EXPECTED_RAG = "gpt-oss:120b-cloud"
 
 
-def test_settings_default_model_is_pinned() -> None:
-    # Assert the *hardcoded field default*, independent of any OLLAMA_MODEL
-    # env var that might be set in the shell running the suite.
-    assert Settings.model_fields["ollama_model"].default == PINNED_MODEL
+def test_hardcoded_constants() -> None:
+    assert OLLAMA_MODEL == EXPECTED_DEFAULT
+    assert OLLAMA_RAG_MODEL == EXPECTED_RAG
 
 
-def test_chat_payload_carries_the_model() -> None:
-    payload = _chat_payload(PINNED_MODEL, "hi", system=None, stream=False)
-    assert payload["model"] == PINNED_MODEL
+def test_settings_properties_return_constants() -> None:
+    settings = get_settings()
+    assert settings.ollama_model == OLLAMA_MODEL
+    assert settings.ollama_rag_model == OLLAMA_RAG_MODEL
 
 
-def test_client_sends_the_configured_model() -> None:
-    # Build with an explicit rotator so no real API keys are required, and
-    # confirm the client forwards exactly what settings resolved — i.e. the
-    # model the orchestrator/RAG/agent will actually put on the wire.
+def test_models_are_not_env_overridable(monkeypatch) -> None:
+    # Even with the env vars set, the properties return the hardcoded
+    # constants — proving the models are not read from the environment.
+    monkeypatch.setenv("OLLAMA_MODEL", "evil:override")
+    monkeypatch.setenv("OLLAMA_RAG_MODEL", "evil:override")
+    settings = Settings()
+    assert settings.ollama_model == OLLAMA_MODEL
+    assert settings.ollama_rag_model == OLLAMA_RAG_MODEL
+
+
+def test_default_client_uses_default_model() -> None:
+    # Explicit rotator so no real API keys are required.
     client = OllamaCloudLLM(rotator=KeyRotator(["test-key"]))
-    resolved = get_settings().ollama_model
-    payload = _chat_payload(client._model, "hi", system=None, stream=False)
-    assert client._model == resolved
-    assert payload["model"] == resolved
+    assert client._model == OLLAMA_MODEL
+    assert _chat_payload(client._model, "hi", system=None, stream=False)["model"] == OLLAMA_MODEL
+
+
+def test_rag_client_uses_rag_model() -> None:
+    # The per-feature `model=` override is how get_rag_llm() pins the RAG tag.
+    client = OllamaCloudLLM(rotator=KeyRotator(["test-key"]), model=OLLAMA_RAG_MODEL)
+    assert client._model == OLLAMA_RAG_MODEL
+    assert _chat_payload(client._model, "hi", system=None, stream=False)["model"] == OLLAMA_RAG_MODEL

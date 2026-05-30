@@ -10,7 +10,7 @@ from typing import Any
 from app.config import get_settings
 from app.domain.models import Citation, RetrievedChunk
 from app.embeddings import get_embedder
-from app.llm.client import LLMClient, get_llm
+from app.llm.client import LLMClient, get_rag_llm
 from app.rag.citation import validate_citations
 from app.rag.lang import detect_language
 from app.rag.prompts import REFUSAL_EN, REFUSAL_HE, SYSTEM_EN, SYSTEM_HE, build_user_prompt
@@ -57,7 +57,7 @@ async def answer_question(
 
     store = store or get_vector_store()
     embedder = get_embedder()
-    llm = llm or get_llm()
+    llm = llm or get_rag_llm()
 
     filters: dict[str, Any] = {}
     if jurisdictions:

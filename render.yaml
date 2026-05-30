@@ -54,8 +54,8 @@ services:
         sync: false
       - key: OLLAMA_BASE_URL
         value: https://ollama.com
-      - key: OLLAMA_MODEL
-        value: qwen3.5:397b-cloud
+      # OLLAMA_MODEL / OLLAMA_RAG_MODEL are intentionally hardcoded in
+      # app/config.py (not env vars) so a stray value can't override them.
       - key: QDRANT_URL
         sync: false
       - key: QDRANT_API_KEY
