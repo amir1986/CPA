@@ -376,9 +376,21 @@ failure scenario, not the WHAT — the diff already shows the what.
 Settings are pydantic-settings, loaded from env / `.env`, `case_sensitive=
 False`, unknown keys ignored. Defaults target the docker-compose stack.
 
+**LLM model is pinned to `qwen3.5:cloud`.** Every AI call — RAG
+(`query_engine`), the comparison orchestrator, the agent loop, and Hebrew
+translation — goes through the single `get_llm()` → `OllamaCloudLLM` client,
+which reads `settings.ollama_model`. That default is hardcoded to
+`qwen3.5:cloud` in `app/config.py`, and the deployment configs (`render.yaml`,
+`docker-compose.yml`, the Helm `api-secret.yaml`, `.env.example`) all set
+`OLLAMA_MODEL=qwen3.5:cloud` so nothing overrides it back. Picked over
+`gpt-oss:120b` for its 256K context (relaxes the `_build_corpus` trimming),
+stronger multilingual/Hebrew output, and `thinking` capability. To change the
+model, update ALL of those places together — changing only `app/config.py`
+lets the deploy env win.
+
 | Group | Vars (defaults) | Notes |
 |---|---|---|
-| Ollama | `OLLAMA_API_KEYS` / `OLLAMA_API_KEYS_FILE`, `OLLAMA_MODEL` (`gpt-oss:120b`), `OLLAMA_BASE_URL` (`https://ollama.com`), `OLLAMA_MAX_RETRIES_PER_KEY` (2), `OLLAMA_REQUEST_TIMEOUT_SECONDS` (120), `OLLAMA_RATE_LIMIT_COOLDOWN_SECONDS` (60) | keys file wins over inline |
+| Ollama | `OLLAMA_API_KEYS` / `OLLAMA_API_KEYS_FILE`, `OLLAMA_MODEL` (`qwen3.5:cloud`), `OLLAMA_BASE_URL` (`https://ollama.com`), `OLLAMA_MAX_RETRIES_PER_KEY` (2), `OLLAMA_REQUEST_TIMEOUT_SECONDS` (120), `OLLAMA_RATE_LIMIT_COOLDOWN_SECONDS` (60) | keys file wins over inline |
 | Database | `DATABASE_URL` | `_ensure_asyncpg_dsn` rewrites `postgres://`/`postgresql://` → `postgresql+asyncpg://` and `sslmode=` → asyncpg `ssl=`. Don't hand-write the driver. |
 | Qdrant | `QDRANT_URL`, `QDRANT_API_KEY` | |
 | Object store | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_REGION` | `CPA_S3_BACKEND=memory` swaps in `MemoryObjectStore` |
