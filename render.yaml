@@ -55,7 +55,7 @@ services:
       - key: OLLAMA_BASE_URL
         value: https://ollama.com
       - key: OLLAMA_MODEL
-        value: qwen3.5:cloud
+        value: qwen3.5:397b-cloud
       - key: QDRANT_URL
         sync: false
       - key: QDRANT_API_KEY

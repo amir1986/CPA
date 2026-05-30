@@ -27,7 +27,7 @@ class Settings(BaseSettings):
         description="Optional path to a file containing keys (one per line). Takes precedence over OLLAMA_API_KEYS if set.",
     )
     ollama_base_url: str = "https://ollama.com"
-    ollama_model: str = "qwen3.5:cloud"
+    ollama_model: str = "qwen3.5:397b-cloud"
     ollama_rate_limit_cooldown_seconds: float = 60.0
     ollama_max_retries_per_key: int = 2
     ollama_request_timeout_seconds: float = 120.0

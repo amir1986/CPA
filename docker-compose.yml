@@ -23,7 +23,7 @@ services:
     environment:
       OLLAMA_API_KEYS: ${OLLAMA_API_KEYS:-}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-https://ollama.com}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:cloud}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:397b-cloud}
       DATABASE_URL: postgresql+asyncpg://cpa:cpa@postgres:5432/cpa
       QDRANT_URL: http://qdrant:6333
       S3_ENDPOINT_URL: http://minio:9000

@@ -351,6 +351,7 @@ failure scenario, not the WHAT — the diff already shows the what.
 | Chat dead: `/api/stream` proxy 401'd on stub session's empty token | `web/src/app/api/stream/[...path]/route.ts` | audit fix |
 | `files.upload_file` read body before size check → OOM vector | `app/api/routes/files.py` | audit fix |
 | One Ollama key 5xx-ing starved all keys (no fan-out on server error) | `app/llm/client.py` + `ollama_rotator.py` | audit fix |
+| Model-level `403` (no account access to a tag) disabled ALL keys → bogus "keys exhausted" | `app/config.py` model pin; verify tag entitlement (curl) before pinning | `qwen3.5:cloud` 403'd; fallback `gpt-oss:120b` |
 | `files`/`query` SSE missing preamble+heartbeat → buffered by edge | `files.py`, `query.py` | audit fix |
 | `query_engine` `top_k or` / `min_score or` discarded an explicit `0` | `app/rag/query_engine.py` | audit fix |
 | `users.locale` server_default stuck at `en` while ORM default = `he` | migration `0006` | audit fix |
@@ -376,21 +377,33 @@ failure scenario, not the WHAT — the diff already shows the what.
 Settings are pydantic-settings, loaded from env / `.env`, `case_sensitive=
 False`, unknown keys ignored. Defaults target the docker-compose stack.
 
-**LLM model is pinned to `qwen3.5:cloud`.** Every AI call — RAG
+**LLM model is pinned to `qwen3.5:397b-cloud`.** Every AI call — RAG
 (`query_engine`), the comparison orchestrator, the agent loop, and Hebrew
 translation — goes through the single `get_llm()` → `OllamaCloudLLM` client,
-which reads `settings.ollama_model`. That default is hardcoded to
-`qwen3.5:cloud` in `app/config.py`, and the deployment configs (`render.yaml`,
+which reads `settings.ollama_model`. That default is hardcoded in
+`app/config.py`, and the deployment configs (`render.yaml`,
 `docker-compose.yml`, the Helm `api-secret.yaml`, `.env.example`) all set
-`OLLAMA_MODEL=qwen3.5:cloud` so nothing overrides it back. Picked over
-`gpt-oss:120b` for its 256K context (relaxes the `_build_corpus` trimming),
-stronger multilingual/Hebrew output, and `thinking` capability. To change the
+`OLLAMA_MODEL=qwen3.5:397b-cloud` so nothing overrides it back. To change the
 model, update ALL of those places together — changing only `app/config.py`
-lets the deploy env win.
+lets the deploy env win. `gpt-oss:120b` is the known-good fallback the keys
+are entitled to.
+
+**Before switching models, VERIFY the account is entitled to the new tag.**
+We tried pinning `qwen3.5:cloud` and the whole AI surface went down: Ollama
+Cloud returned `403 Forbidden` for that model (the plan/keys had no access).
+A `403` makes the `KeyRotator` mark the key **DISABLED for the process
+lifetime** (`report_unauthorized`), so a model-level 403 burned through BOTH
+keys and surfaced as the misleading `AllKeysExhausted` → "All Ollama Cloud
+API keys are exhausted." It was NOT a key/quota/round-robin problem — every
+key hit the same entitlement wall. Confirm a tag works (`curl -sS
+https://ollama.com/api/chat -H "Authorization: Bearer $KEY" -d
+'{"model":"<tag>","messages":[{"role":"user","content":"hi"}],"stream":false}'`
+→ expect 200, not 403) before pinning it. After a model-induced disable, the
+keys stay dead until the process restarts (a redeploy resets rotator state).
 
 | Group | Vars (defaults) | Notes |
 |---|---|---|
-| Ollama | `OLLAMA_API_KEYS` / `OLLAMA_API_KEYS_FILE`, `OLLAMA_MODEL` (`qwen3.5:cloud`), `OLLAMA_BASE_URL` (`https://ollama.com`), `OLLAMA_MAX_RETRIES_PER_KEY` (2), `OLLAMA_REQUEST_TIMEOUT_SECONDS` (120), `OLLAMA_RATE_LIMIT_COOLDOWN_SECONDS` (60) | keys file wins over inline |
+| Ollama | `OLLAMA_API_KEYS` / `OLLAMA_API_KEYS_FILE`, `OLLAMA_MODEL` (`qwen3.5:397b-cloud`), `OLLAMA_BASE_URL` (`https://ollama.com`), `OLLAMA_MAX_RETRIES_PER_KEY` (2), `OLLAMA_REQUEST_TIMEOUT_SECONDS` (120), `OLLAMA_RATE_LIMIT_COOLDOWN_SECONDS` (60) | keys file wins over inline |
 | Database | `DATABASE_URL` | `_ensure_asyncpg_dsn` rewrites `postgres://`/`postgresql://` → `postgresql+asyncpg://` and `sslmode=` → asyncpg `ssl=`. Don't hand-write the driver. |
 | Qdrant | `QDRANT_URL`, `QDRANT_API_KEY` | |
 | Object store | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_REGION` | `CPA_S3_BACKEND=memory` swaps in `MemoryObjectStore` |

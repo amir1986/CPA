@@ -1,12 +1,14 @@
-"""Regression guard: the Ollama model is pinned to ``qwen3.5:cloud``.
+"""Regression guard: the Ollama model is pinned to ``qwen3.5:397b-cloud``.
 
 Every AI call — RAG (`query_engine`), the comparison orchestrator, the
 agent loop and Hebrew translation — flows through the single
 `OllamaCloudLLM` client, which reads `settings.ollama_model`. We pin that
-default in code (and mirror it in every deploy config) so a missing
-`OLLAMA_MODEL` env var can't silently fall back to the old `gpt-oss:120b`.
+default in code (and mirror it in every deploy config) so the model can't
+silently change. NOTE: a pinned tag must be one the account is *entitled*
+to — an un-entitled tag (e.g. `qwen3.5:cloud`) returns 403 and disables
+every key (see CLAUDE.md §9). `gpt-oss:120b` is the known-good fallback.
 If someone changes the default, this test fails loudly and points them at
-the deploy configs that must change in lockstep (see CLAUDE.md §9).
+the deploy configs that must change in lockstep.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from app.config import Settings, get_settings
 from app.llm.client import OllamaCloudLLM, _chat_payload
 from app.llm.ollama_rotator import KeyRotator
 
-PINNED_MODEL = "qwen3.5:cloud"
+PINNED_MODEL = "qwen3.5:397b-cloud"
 
 
 def test_settings_default_model_is_pinned() -> None:
